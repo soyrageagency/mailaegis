@@ -201,6 +201,23 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
         return json(res, 200, { labels: applied, messages: mailbox.list() });
       }
 
+      // The original bytes: "Download .eml" and the raw-source viewer. An
+      // analyst who cannot read the headers they are being told about has to
+      // take the tool's word for it.
+      if (/^\/api\/mailbox\/messages\/[^/]+\/raw$/.test(path) && req.method === "GET") {
+        const id = decodeURIComponent(path.split("/")[4]!);
+        const raw = mailbox.getRaw(id);
+        if (!raw) return json(res, 404, { error: "Unknown message." });
+        res.writeHead(200, {
+          "Content-Type": "message/rfc822",
+          // A filename that cannot escape the download folder, whatever the
+          // message called itself.
+          "Content-Disposition": `attachment; filename="${id.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 60)}.eml"`,
+          "Cache-Control": "no-store",
+        });
+        return void res.end(raw);
+      }
+
       if (path.startsWith("/api/mailbox/messages/") && req.method === "GET") {
         const id = decodeURIComponent(path.slice("/api/mailbox/messages/".length));
         const analysis = mailbox.get(id);

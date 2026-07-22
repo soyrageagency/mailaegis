@@ -34,10 +34,122 @@ const IP = {
 IP.route = '<circle cx="5.5" cy="6" r="2.2"/><circle cx="18.5" cy="18" r="2.2"/><path d="M7.7 6h6.3a3.5 3.5 0 010 7H10a3.5 3.5 0 000 7h6.3"/>';
 IP.globe = '<circle cx="12" cy="12" r="9"/><path d="M3.2 9.5h17.6M3.2 14.5h17.6"/><path d="M12 3a15 15 0 010 18a15 15 0 010-18z"/>';
 IP.flask = '<path d="M10 3v6.2L4.6 18a2 2 0 001.7 3h11.4a2 2 0 001.7-3L14 9.2V3"/><path d="M8.5 3h7M7.5 15h9"/>';
+// Organisation glyphs.
+IP.pin = '<path d="M9 4h6l-1 6 3.5 3H6.5L10 10z"/><path d="M12 13v7"/>';
+IP.flag = '<path d="M5 21V4"/><path d="M5 5h11l-2 3.5L16 12H5z"/>';
+IP.square = '<rect x="4.5" y="4.5" width="15" height="15" rx="3.5"/>';
+IP.checked = '<rect x="4.5" y="4.5" width="15" height="15" rx="3.5"/><path d="M8.5 12l2.5 2.5 4.5-5"/>';
+IP.download = '<path d="M12 4v10m0 0l4-4m-4 4l-4-4"/><path d="M4 17v1a2 2 0 002 2h12a2 2 0 002-2v-1"/>';
+IP.copy = '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 9V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7a2 2 0 002 2h3"/>';
+IP.code = '<path d="M9 7l-5 5 5 5M15 7l5 5-5 5"/>';
+IP.sound = '<path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4z"/><path d="M16 9a4 4 0 010 6"/>';
+IP.mute = '<path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4z"/><path d="M16.5 9.5l4 4m0-4l-4 4"/>';
+IP.refresh = '<path d="M20 12a8 8 0 11-2.6-5.9"/><path d="M20 4v4h-4"/>';
 
 const icon = (n, cls = "ic") => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${IP[n] || ""}</svg>`;
 
-const S = { status: null, messages: [], selected: null, categories: [], threats: {}, providers: [], provider: "", filter: { threat: "", label: "", q: "" } };
+const S = {
+  status: null, messages: [], selected: null, categories: [], threats: {},
+  providers: [], provider: "",
+  filter: { threat: "", label: "", q: "", quick: "" },
+  sort: "risk",
+  /** Ids ticked for a bulk action. */
+  picked: new Set(),
+  saved: [],
+};
+
+// ------------------------------------------------------- local message state
+/*
+ * Read, pinned and flagged live in the browser, not on the IMAP server.
+ * Deliberately: MailAegis fetches with BODY.PEEK so that connecting it never
+ * changes what your users see in Outlook. Writing \Seen back would undo that
+ * promise the first time an analyst opened a message.
+ */
+const MARKS_KEY = "mailaegis.marks";
+let MARKS = { read: {}, pinned: {}, flagged: {} };
+
+function loadMarks() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(MARKS_KEY) || "{}");
+    MARKS = { read: stored.read || {}, pinned: stored.pinned || {}, flagged: stored.flagged || {} };
+  } catch { /* private mode — marks simply do not persist */ }
+}
+function saveMarks() {
+  try { localStorage.setItem(MARKS_KEY, JSON.stringify(MARKS)); } catch { /* nothing to do */ }
+}
+const isRead = (id) => Boolean(MARKS.read[id]);
+const isPinned = (id) => Boolean(MARKS.pinned[id]);
+const isFlagged = (id) => Boolean(MARKS.flagged[id]);
+
+function mark(kind, id, value) {
+  if (value) MARKS[kind][id] = 1;
+  else delete MARKS[kind][id];
+  saveMarks();
+}
+
+// ---------------------------------------------------------- search operators
+/*
+ * `from:acme has:attachment is:malicious score>50` — the vocabulary an
+ * analyst already types in every other security console. Anything that is not
+ * an operator is matched as free text, so the plain case still just works.
+ */
+const OPERATORS = /(\w+)(:|>=|<=|>|<|=)("[^"]*"|\S+)/g;
+
+function parseQuery(raw) {
+  const terms = [];
+  let text = String(raw || "");
+  text = text.replace(OPERATORS, (match, key, op, value) => {
+    terms.push({ key: key.toLowerCase(), op, value: value.replace(/^"|"$/g, "").toLowerCase() });
+    return " ";
+  });
+  return { terms, text: text.trim().toLowerCase() };
+}
+
+function matchesQuery(m, query) {
+  if (query.text) {
+    const hay = `${m.from.name} ${m.from.address} ${m.to} ${m.subject} ${m.snippet}`.toLowerCase();
+    if (!hay.includes(query.text)) return false;
+  }
+  for (const t of query.terms) {
+    if (!matchesTerm(m, t)) return false;
+  }
+  return true;
+}
+
+function matchesTerm(m, t) {
+  const has = (s) => String(s || "").toLowerCase().includes(t.value);
+  switch (t.key) {
+    case "from": return has(m.from.address) || has(m.from.name);
+    case "to": return has(m.to);
+    case "subject": case "subj": return has(m.subject);
+    case "body": return has(m.snippet);
+    case "mailbox": case "in": return has(m.accountLabel);
+    case "label": return (m.labels || []).some((l) => l.includes(t.value));
+    case "threat": return (m.threat || []).some((x) => x.includes(t.value));
+    case "has":
+      if (t.value === "attachment" || t.value === "file") return m.attachmentCount > 0;
+      if (t.value === "link" || t.value === "url") return m.urlCount > 0;
+      if (t.value === "finding") return m.findingCount > 0;
+      return false;
+    case "is":
+      if (t.value === "unread") return !isRead(m.id);
+      if (t.value === "read") return isRead(m.id);
+      if (t.value === "pinned") return isPinned(m.id);
+      if (t.value === "flagged") return isFlagged(m.id);
+      return m.verdict === t.value;
+    case "score": {
+      const n = Number(t.value);
+      if (!Number.isFinite(n)) return true;
+      if (t.op === ">") return m.score > n;
+      if (t.op === ">=") return m.score >= n;
+      if (t.op === "<") return m.score < n;
+      if (t.op === "<=") return m.score <= n;
+      return m.score === n;
+    }
+    // An unrecognised operator should not silently hide everything.
+    default: return true;
+  }
+}
 
 // ------------------------------------------------------------------ helpers
 function when(dateStr) {
@@ -104,17 +216,20 @@ function chime(kind) {
  * exactly the chrome a phishing page wears. Our own dialogs look like the
  * product they belong to.
  */
-function dialog({ title, body = "", confirmLabel = "Confirm", cancelLabel = "Cancel", danger = false, input = null }) {
+function dialog({ title, body = "", html = "", wide = false, confirmLabel = "Confirm", cancelLabel = "Cancel", danger = false, input = null }) {
   return new Promise((resolve) => {
     const host = document.createElement("div");
     host.className = "modal";
+    // `body` is escaped because it can carry a server message; `html` is only
+    // ever content this file wrote.
     host.innerHTML = `
-      <div class="mbox" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+      <div class="mbox ${wide ? "wide" : ""}" role="dialog" aria-modal="true" aria-label="${esc(title)}">
         <h3>${esc(title)}</h3>
         ${body ? `<p>${esc(body)}</p>` : ""}
+        ${html}
         ${input !== null ? `<input class="minput" value="${esc(input)}" />` : ""}
         <div class="mrowbtns">
-          <button class="ghost sm" data-no>${esc(cancelLabel)}</button>
+          ${cancelLabel ? `<button class="ghost sm" data-no>${esc(cancelLabel)}</button>` : ""}
           <button class="mgo ${danger ? "danger" : ""}" data-yes>${esc(confirmLabel)}</button>
         </div>
       </div>`;
@@ -138,7 +253,7 @@ function dialog({ title, body = "", confirmLabel = "Confirm", cancelLabel = "Can
     };
 
     host.querySelector("[data-yes]").addEventListener("click", accept);
-    host.querySelector("[data-no]").addEventListener("click", () => done(null));
+    host.querySelector("[data-no]")?.addEventListener("click", () => done(null));
     // Clicking the backdrop is a cancel, but only the backdrop itself.
     host.addEventListener("mousedown", (e) => { if (e.target === host) done(null); });
     document.addEventListener("keydown", onKey);
@@ -167,6 +282,10 @@ async function api(path, options) {
 
 // ------------------------------------------------------------------- boot
 async function init() {
+  loadMarks();
+  loadSaved();
+  try { S.sort = localStorage.getItem("mailaegis.sort") || "risk"; } catch {}
+
   try {
     const m = await api("/api/meta");
     const on = Object.entries(m.engines).filter(([, v]) => v).map(([k]) => k).join(" · ");
@@ -211,7 +330,25 @@ async function init() {
   wirePicker();
   await loadProviders();
   wireComposer();
-  $("#q").addEventListener("input", () => { S.filter.q = $("#q").value.toLowerCase(); renderList(); });
+  wireShortcuts();
+  renderSaved();
+  applyTheme();
+  applySound();
+
+  $("#saveSearch").addEventListener("click", saveSearch);
+  $("#helpBtn").addEventListener("click", showShortcuts);
+  $("#themeBtn").addEventListener("click", () => {
+    const dark = !document.body.classList.contains("dark");
+    try { localStorage.setItem("mailaegis.theme", dark ? "dark" : "light"); } catch {}
+    applyTheme();
+  });
+  $("#soundBtn").addEventListener("click", () => {
+    try { localStorage.setItem(SOUND_KEY, soundOn() ? "off" : "on"); } catch {}
+    applySound();
+    if (soundOn()) chime("clean");
+  });
+
+  $("#q").addEventListener("input", () => { S.filter.q = $("#q").value; renderList(); });
   $("#newLabel").addEventListener("click", createLabel);
 }
 
@@ -476,16 +613,28 @@ async function createLabel() {
 }
 
 // ------------------------------------------------------------------- list
+const SORTS = {
+  risk: { label: "Risk", cmp: (a, b) => b.score - a.score || b.seq - a.seq },
+  newest: { label: "Newest", cmp: (a, b) => b.seq - a.seq },
+  sender: { label: "Sender", cmp: (a, b) => (a.from.name || a.from.address).localeCompare(b.from.name || b.from.address) },
+  subject: { label: "Subject", cmp: (a, b) => (a.subject || "").localeCompare(b.subject || "") },
+};
+
 function visibleMessages() {
-  return S.messages.filter((m) => {
+  const query = parseQuery(S.filter.q);
+  const rows = S.messages.filter((m) => {
     if (S.filter.threat && !(m.threat || []).includes(S.filter.threat)) return false;
     if (S.filter.label && !(m.labels || []).includes(S.filter.label)) return false;
-    if (S.filter.q) {
-      const hay = `${m.from.name} ${m.from.address} ${m.subject} ${m.snippet}`.toLowerCase();
-      if (!hay.includes(S.filter.q)) return false;
-    }
-    return true;
+    if (S.filter.quick === "unread" && isRead(m.id)) return false;
+    if (S.filter.quick === "flagged" && !isFlagged(m.id)) return false;
+    if (S.filter.quick === "attachments" && !m.attachmentCount) return false;
+    if (S.filter.quick === "risky" && m.verdict === "clean") return false;
+    return matchesQuery(m, query);
   });
+
+  // Pinned always float, whatever the sort — that is what pinning means.
+  const cmp = (SORTS[S.sort] || SORTS.risk).cmp;
+  return rows.sort((a, b) => (isPinned(b.id) ? 1 : 0) - (isPinned(a.id) ? 1 : 0) || cmp(a, b));
 }
 
 function renderList() {
@@ -493,13 +642,21 @@ function renderList() {
   // In the unified view a row is ambiguous without saying which mailbox it
   // landed in — that is the whole point of running several.
   const showAccount = S.status && S.status.activeId === "" && (S.status.accounts || []).length > 1;
-  $("#listCount").textContent = `${rows.length}/${S.messages.length}`;
+  const unread = S.messages.filter((m) => !isRead(m.id)).length;
+  $("#listCount").textContent = `${rows.length}/${S.messages.length}${unread ? ` · ${unread} unread` : ""}`;
+
   $("#list").innerHTML = rows.map((m, i) => `
-    <button class="mrow ${m.verdict} ${S.selected === m.id ? "active" : ""}" data-id="${esc(m.id)}" style="--i:${Math.min(i, 14)}">
+    <div class="mrow ${m.verdict} ${S.selected === m.id ? "active" : ""} ${isRead(m.id) ? "read" : "unread"} ${S.picked.has(m.id) ? "picked" : ""}"
+         data-id="${esc(m.id)}" style="--i:${Math.min(i, 14)}" role="button" tabindex="0">
       <span class="bar"></span>
       <span class="body">
         ${showAccount ? `<span class="inbox">${icon("mail")}${esc(m.accountLabel || "")}</span>` : ""}
-        <span class="top"><span class="who">${esc(m.from.name || m.from.address)}</span><span class="when">${esc(when(m.date))}</span></span>
+        <span class="top">
+          <span class="who">${esc(m.from.name || m.from.address)}</span>
+          ${isPinned(m.id) ? `<span class="mk" title="Pinned">${icon("pin")}</span>` : ""}
+          ${isFlagged(m.id) ? `<span class="mk fl" title="Flagged">${icon("flag")}</span>` : ""}
+          <span class="when">${esc(when(m.date))}</span>
+        </span>
         <div class="subj">${esc(m.subject || "(no subject)")}</div>
         <div class="snip">${esc(m.snippet)}</div>
         <div class="tags">
@@ -510,16 +667,117 @@ function renderList() {
           ${m.verdict !== "clean" ? `<span class="meta">${m.score}/100</span>` : ""}
         </div>
       </span>
-    </button>`).join("") || '<div class="empty2" style="padding:18px">No messages match.</div>';
+      <span class="rowtools">
+        <button class="rt" data-pin="${esc(m.id)}" title="${isPinned(m.id) ? "Unpin" : "Pin to the top"}">${icon("pin")}</button>
+        <button class="rt ${isFlagged(m.id) ? "on" : ""}" data-flag="${esc(m.id)}" title="${isFlagged(m.id) ? "Clear flag" : "Flag for follow-up"}">${icon("flag")}</button>
+        <button class="rt" data-select="${esc(m.id)}" title="Select">${icon(S.picked.has(m.id) ? "checked" : "square")}</button>
+      </span>
+    </div>`).join("") || '<div class="empty2" style="padding:18px">No messages match.</div>';
+
   $("#list").onclick = (e) => {
+    const pin = e.target.closest("[data-pin]");
+    if (pin) { mark("pinned", pin.dataset.pin, !isPinned(pin.dataset.pin)); renderList(); return; }
+    const flag = e.target.closest("[data-flag]");
+    if (flag) { mark("flagged", flag.dataset.flag, !isFlagged(flag.dataset.flag)); renderList(); return; }
+    const pick = e.target.closest("[data-select]");
+    if (pick) { togglePicked(pick.dataset.select); return; }
     const b = e.target.closest("[data-id]"); if (!b) return;
     openMessage(b.dataset.id);
   };
+
+  renderQuickBar();
+  renderBulkBar();
+}
+
+function togglePicked(id) {
+  if (S.picked.has(id)) S.picked.delete(id);
+  else S.picked.add(id);
+  renderList();
+}
+
+/** Quick filters and the sort control, above the list. */
+function renderQuickBar() {
+  const counts = {
+    unread: S.messages.filter((m) => !isRead(m.id)).length,
+    flagged: S.messages.filter((m) => isFlagged(m.id)).length,
+    attachments: S.messages.filter((m) => m.attachmentCount > 0).length,
+    risky: S.messages.filter((m) => m.verdict !== "clean").length,
+  };
+  const chip = (key, label) => `<button class="qf ${S.filter.quick === key ? "active" : ""}" data-quick="${key}">${label}${counts[key] ? `<span class="n">${counts[key]}</span>` : ""}</button>`;
+
+  $("#quickbar").innerHTML =
+    `<button class="qf ${S.filter.quick === "" ? "active" : ""}" data-quick="">All</button>` +
+    chip("unread", "Unread") + chip("risky", "Risky") + chip("flagged", "Flagged") + chip("attachments", "Files") +
+    `<span class="qsort">${Object.entries(SORTS).map(([k, v]) => `<button class="qs ${S.sort === k ? "active" : ""}" data-sort="${k}">${v.label}</button>`).join("")}</span>`;
+
+  $("#quickbar").onclick = (e) => {
+    const q = e.target.closest("[data-quick]");
+    if (q) { S.filter.quick = q.dataset.quick; renderList(); return; }
+    const s = e.target.closest("[data-sort]");
+    if (s) { S.sort = s.dataset.sort; try { localStorage.setItem("mailaegis.sort", S.sort); } catch {} renderList(); }
+  };
+}
+
+/** The bar that appears once messages are selected. */
+function renderBulkBar() {
+  const n = S.picked.size;
+  $("#bulkbar").classList.toggle("hidden", n === 0);
+  if (!n) return;
+  $("#bulkbar").innerHTML = `
+    <span class="bn">${n} selected</span>
+    <button class="ghost sm" data-bulk="read">Mark read</button>
+    <button class="ghost sm" data-bulk="unread">Mark unread</button>
+    <button class="ghost sm" data-bulk="pin">Pin</button>
+    <button class="ghost sm" data-bulk="flag">Flag</button>
+    <button class="ghost sm" data-bulk="label">Label…</button>
+    <button class="ghost sm" data-bulk="export">Export .eml</button>
+    <button class="ghost sm" data-bulk="none">Clear</button>`;
+  $("#bulkbar").onclick = async (e) => {
+    const b = e.target.closest("[data-bulk]"); if (!b) return;
+    const ids = [...S.picked];
+    switch (b.dataset.bulk) {
+      case "read": ids.forEach((id) => mark("read", id, true)); break;
+      case "unread": ids.forEach((id) => mark("read", id, false)); break;
+      case "pin": { const on = !ids.every((id) => isPinned(id)); ids.forEach((id) => mark("pinned", id, on)); break; }
+      case "flag": { const on = !ids.every((id) => isFlagged(id)); ids.forEach((id) => mark("flagged", id, on)); break; }
+      case "label": return bulkLabel(ids);
+      case "export": return exportMessages(ids);
+      case "none": S.picked.clear(); break;
+    }
+    renderList();
+  };
+}
+
+async function bulkLabel(ids) {
+  const chosen = await pickLabels([]);
+  if (chosen === null) return;
+  for (const id of ids) {
+    await api(`/api/mailbox/messages/${encodeURIComponent(id)}/labels`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ labels: chosen }),
+    }).catch(() => {});
+  }
+  await loadMessages();
+  toast(`Labelled ${ids.length} message(s).`);
+  renderRail(); renderList();
+}
+
+/** Download the original bytes — what a SOC actually wants to keep. */
+function exportMessages(ids) {
+  for (const id of ids) {
+    const a = document.createElement("a");
+    a.href = `/api/mailbox/messages/${encodeURIComponent(id)}/raw`;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  toast(`Exporting ${ids.length} message(s) as .eml.`);
 }
 
 // -------------------------------------------------------------- read pane
 async function openMessage(id) {
   S.selected = id;
+  mark("read", id, true);
   renderList();
   try {
     const a = await api(`/api/mailbox/messages/${encodeURIComponent(id)}`);
@@ -811,6 +1069,77 @@ function wireComposer() {
   });
 }
 
+// ------------------------------------------------- saved searches & prefs
+const SAVED_KEY = "mailaegis.saved";
+
+function loadSaved() {
+  try { S.saved = JSON.parse(localStorage.getItem(SAVED_KEY) || "[]"); } catch { S.saved = []; }
+}
+
+function renderSaved() {
+  $("#savedbar").innerHTML = S.saved.map((s, i) => `
+    <button class="sv" data-run="${i}" title="${esc(s.q)}">${esc(s.name)}<span class="x" data-forget="${i}">×</span></button>`).join("");
+  $("#savedbar").classList.toggle("hidden", S.saved.length === 0);
+  $("#savedbar").onclick = (e) => {
+    const forget = e.target.closest("[data-forget]");
+    if (forget) {
+      e.stopPropagation();
+      S.saved.splice(Number(forget.dataset.forget), 1);
+      try { localStorage.setItem(SAVED_KEY, JSON.stringify(S.saved)); } catch {}
+      renderSaved();
+      return;
+    }
+    const run = e.target.closest("[data-run]"); if (!run) return;
+    const s = S.saved[Number(run.dataset.run)];
+    $("#q").value = s.q; S.filter.q = s.q;
+    renderList();
+  };
+}
+
+async function saveSearch() {
+  const q = $("#q").value.trim();
+  if (!q) { toast("Type a search first, then save it."); return; }
+  const name = await askText("Name this search", q.slice(0, 40), { confirmLabel: "Save" });
+  if (!name) return;
+  S.saved.push({ name, q });
+  try { localStorage.setItem(SAVED_KEY, JSON.stringify(S.saved)); } catch {}
+  renderSaved();
+  toast(`Saved "${name}".`);
+}
+
+/** Dark mode and sound live in the same place: one click, remembered. */
+function applyTheme() {
+  let dark = false;
+  try { dark = localStorage.getItem("mailaegis.theme") === "dark"; } catch {}
+  document.body.classList.toggle("dark", dark);
+  $("#themeBtn").innerHTML = dark
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z"/></svg>';
+}
+
+function applySound() {
+  $("#soundBtn").innerHTML = icon(soundOn() ? "sound" : "mute");
+  $("#soundBtn").title = soundOn() ? "Sound cues on" : "Sound cues off";
+}
+
+const SHORTCUTS = [
+  ["j / ↓", "Next message"], ["k / ↑", "Previous message"], ["Enter", "Open the selected message"],
+  ["c", "Compose"], ["r", "Reply"], ["a", "Reply to all"], ["f", "Forward"],
+  ["u", "Toggle read / unread"], ["p", "Pin"], ["s", "Flag"], ["x", "Select for a bulk action"],
+  ["e", "Export as .eml"], ["/", "Jump to search"], ["Esc", "Close, or clear the search"],
+  ["g then i", "Go to the Inbox"], ["?", "This list"],
+];
+
+function showShortcuts() {
+  dialog({
+    title: "Keyboard shortcuts",
+    html: `<div class="keys">${SHORTCUTS.map(([k, what]) => `<div><kbd>${esc(k)}</kbd><span>${esc(what)}</span></div>`).join("")}</div>`,
+    wide: true,
+    confirmLabel: "Close",
+    cancelLabel: "",
+  });
+}
+
 async function editLabels(id, current) {
   if (!S.categories.length) { await notify("No labels yet", 'Create one first with the "+" next to Labels in the sidebar.'); return; }
   const chosen = await pickLabels(current);
@@ -857,6 +1186,67 @@ function pickLabels(current) {
     host.querySelector("[data-no]").addEventListener("click", () => done(null));
     host.addEventListener("mousedown", (e) => { if (e.target === host) done(null); });
     document.addEventListener("keydown", onKey);
+  });
+}
+
+// ------------------------------------------------------------- shortcuts
+/*
+ * The vocabulary Gmail taught everyone, because an analyst working a queue of
+ * eighty messages should never have to reach for the mouse.
+ */
+function wireShortcuts() {
+  let pendingG = false;
+
+  document.addEventListener("keydown", (e) => {
+    // Never steal a key from a field the user is typing in, and never from a
+    // dialog or the composer, which have their own handling.
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+    if (document.querySelector(".modal")) return;
+    if (!$("#composer").classList.contains("hidden")) return;
+
+    if (e.key === "/" && !typing) { e.preventDefault(); $("#q").focus(); $("#q").select(); return; }
+    if (e.key === "Escape" && typing && e.target.id === "q") {
+      $("#q").value = ""; S.filter.q = ""; $("#q").blur(); renderList(); return;
+    }
+    if (typing) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if ($("#client").classList.contains("hidden")) return;
+
+    const rows = visibleMessages();
+    const at = rows.findIndex((m) => m.id === S.selected);
+    const move = (delta) => {
+      if (!rows.length) return;
+      const next = rows[Math.max(0, Math.min(rows.length - 1, at === -1 ? 0 : at + delta))];
+      if (next) { openMessage(next.id); document.querySelector(`.mrow[data-id="${CSS.escape(next.id)}"]`)?.scrollIntoView({ block: "nearest" }); }
+    };
+
+    if (pendingG) {
+      pendingG = false;
+      if (e.key === "i") { S.filter.quick = ""; S.filter.threat = ""; S.filter.label = ""; renderList(); return; }
+    }
+
+    switch (e.key) {
+      case "j": case "ArrowDown": e.preventDefault(); move(1); break;
+      case "k": case "ArrowUp": e.preventDefault(); move(-1); break;
+      case "g": pendingG = true; break;
+      case "c": e.preventDefault(); openComposer("new"); break;
+      case "?": e.preventDefault(); showShortcuts(); break;
+      case "u": if (S.selected) { mark("read", S.selected, !isRead(S.selected)); renderList(); } break;
+      case "p": if (S.selected) { mark("pinned", S.selected, !isPinned(S.selected)); renderList(); } break;
+      case "s": if (S.selected) { mark("flagged", S.selected, !isFlagged(S.selected)); renderList(); } break;
+      case "x": if (S.selected) togglePicked(S.selected); break;
+      case "e": if (S.selected) exportMessages([S.selected]); break;
+      case "r": case "a": case "f": {
+        if (!S.selected) break;
+        e.preventDefault();
+        const item = S.messages.find((m) => m.id === S.selected);
+        api(`/api/mailbox/messages/${encodeURIComponent(S.selected)}`)
+          .then((analysis) => openComposer(e.key === "r" ? "reply" : e.key === "a" ? "replyAll" : "forward", analysis, item))
+          .catch(() => {});
+        break;
+      }
+      default: break;
+    }
   });
 }
 

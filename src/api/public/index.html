@@ -30,6 +30,9 @@
       <div class="src">
         <span id="engines">—</span>
         <span id="demo" class="badge hidden">DEMO</span>
+        <button id="soundBtn" class="iconbtn" title="Sound cues"></button>
+        <button id="themeBtn" class="iconbtn" title="Dark mode"></button>
+        <button id="helpBtn" class="iconbtn" title="Keyboard shortcuts">?</button>
         <button id="analyseFile" class="ghost sm hidden">Analyse a file</button>
         <button id="disconnect" class="ghost sm hidden">Disconnect</button>
       </div>
@@ -111,10 +114,14 @@
         <div class="listtools">
           <span class="qwrap">
             <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
-            <input id="q" class="q" placeholder="Search sender, subject or body…" autocomplete="off" />
+            <input id="q" class="q" placeholder="Search, or try  from:acme  has:attachment  is:malicious  score&gt;50" autocomplete="off" />
           </span>
+          <button id="saveSearch" class="mini" title="Save this search">★</button>
           <span id="listCount" class="muted"></span>
         </div>
+        <div id="quickbar" class="quickbar"></div>
+        <div id="savedbar" class="savedbar"></div>
+        <div id="bulkbar" class="bulkbar hidden"></div>
         <div id="list" class="list"></div>
       </section>
 

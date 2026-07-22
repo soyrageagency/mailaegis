@@ -206,6 +206,15 @@ if (up) {
   });
   ok("send: an explicit override is honoured", forced.ok === true && forced.blocked === false);
 
+  // ---- Raw export ----------------------------------------------------------
+  const anyId = (await (await fetch(`${B}/api/mailbox/messages`)).json()).messages[0].id;
+  const rawRes = await fetch(`${B}/api/mailbox/messages/${encodeURIComponent(anyId)}/raw`);
+  const rawText = await rawRes.text();
+  ok("export: the original bytes come back as message/rfc822", rawRes.ok && (rawRes.headers.get("content-type") || "").startsWith("message/rfc822"));
+  ok("export: it really is the source, headers and all", /^(From|Received|Subject|Return-Path|Date):/im.test(rawText) && rawText.length > 100);
+  ok("export: the filename cannot escape the download folder", !/[\\/]/.test((rawRes.headers.get("content-disposition") || "").split("filename=")[1] || ""));
+  ok("export: an unknown id is a 404", (await fetch(`${B}/api/mailbox/messages/nope/raw`)).status === 404);
+
   // ---- Provider presets ----------------------------------------------------
   const { providers } = await (await fetch(`${B}/api/providers`)).json();
   ok("presets cover the big corporate platforms", ["microsoft365", "google-workspace", "mailcow"].every((id) => providers.some((p) => p.id === id)));

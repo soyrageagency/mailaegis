@@ -70,7 +70,16 @@ export interface MailboxStatus {
   threatCounts: Record<string, number>;
 }
 
-interface Entry { item: InboxItem; analysis: Analysis }
+interface Entry {
+  item: InboxItem;
+  analysis: Analysis;
+  /**
+   * The original bytes, kept so the message can be exported as .eml or its
+   * raw source inspected. An analyst who cannot see the headers they are
+   * being told about has to take the tool's word for it.
+   */
+  raw: Buffer;
+}
 
 interface Account {
   view: AccountView;
@@ -186,12 +195,22 @@ export class MailboxSession {
     return this.entriesFor(this.activeId).map((e) => e.item);
   }
 
-  get(messageId: string): Analysis | undefined {
+  private entry(messageId: string): Entry | undefined {
     for (const account of this.accounts.values()) {
-      const hit = account.entries.find((e) => e.item.id === messageId);
-      if (hit) return hit.analysis;
+      const hit = account.entries.find((e) => e.item.id === messageId)
+        ?? account.outbox.find((e) => e.item.id === messageId);
+      if (hit) return hit;
     }
     return undefined;
+  }
+
+  get(messageId: string): Analysis | undefined {
+    return this.entry(messageId)?.analysis;
+  }
+
+  /** The original bytes — for .eml export and the raw-source viewer. */
+  getRaw(messageId: string): Buffer | undefined {
+    return this.entry(messageId)?.raw;
   }
 
   /** Switch the view to one account, or "" for the unified inbox. */
@@ -343,6 +362,7 @@ export class MailboxSession {
     const parsed = parseMessage(raw);
     account.outbox.unshift({
       analysis,
+      raw,
       item: {
         id: analysis.id,
         accountId: account.view.id,
@@ -384,6 +404,7 @@ export class MailboxSession {
       counts[analysis.verdict]++;
       entries.push({
         analysis,
+        raw: m.raw,
         item: {
           id: analysis.id,
           accountId: account.view.id,

@@ -42,6 +42,7 @@ Use it as a **desktop app**, a **web UI**, an **HTTP API**, or a **Postfix/SMTPS
 - [Quick start](#-quick-start)
 - [See it](#-see-it)
 - [What it detects](#-what-it-detects)
+- [The mail client](#-the-mail-client)
 - [How it works](#-how-it-works)
 - [Desktop app (macOS & Windows)](#-desktop-app-macos--windows)
 - [Integrate it](#-integrate-it)
@@ -146,6 +147,52 @@ Each finding carries a weight; the total (capped at 100) is the risk score, and 
 
 ---
 
+## 📬 The mail client
+
+MailAegis is not a dashboard bolted onto a scanner — it is a mail client you can
+work in all day, with the antivirus layer underneath every row.
+
+**Mailboxes.** A company has `security@`, `finance@` and `info@`, so MailAegis
+holds **several at once**. Each keeps its own folders, credentials and verdict
+counts; *All mailboxes* is a unified inbox where every row says which account it
+landed in. One-click presets for **Microsoft 365, Google Workspace, Mailcow,
+Zoho, Zimbra, Fastmail, iCloud, IONOS, OVHcloud, Amazon WorkMail** and Proton
+Bridge — with the app-password warning that saves the most common failed
+connection.
+
+**Writing.** Compose, reply, reply-all and forward with Cc/Bcc and attachments.
+Two things a normal client does silently and this one refuses to:
+
+- Replying to a flagged message **states the verdict and score** first.
+- When the original's `Reply-To` points somewhere other than its `From`, the
+  composer **shows you both addresses** — that redirect is exactly how business
+  email compromise succeeds.
+
+And everything you send is **scanned on the way out** by the same engine. A
+malicious verdict holds the message back and lists why; only a second,
+deliberate press sends it anyway.
+
+**Working a queue.**
+
+| | |
+| --- | --- |
+| 🔎 **Search operators** | `from:acme` · `subject:invoice` · `has:attachment` · `has:link` · `is:malicious` · `is:unread` · `is:pinned` · `label:soc` · `score>50` · `in:finance` — anything else is plain text |
+| ⭐ **Saved searches** | Name a query once; it becomes a chip above the list |
+| 📌 **Pin, flag, read/unread** | Pinned rows float above any sort order |
+| ☑️ **Bulk actions** | Select many, then mark, pin, flag, label or export in one go |
+| 🔃 **Sort & quick filters** | Risk · Newest · Sender · Subject, and one-tap Unread / Risky / Flagged / Files |
+| ⌨️ **Keyboard** | `j k` move · `Enter` open · `c` compose · `r a f` reply/all/forward · `u p s x e` mark · `/` search · `?` the full list |
+| 💾 **Export** | Download the original bytes as `.eml` — the source, headers and all |
+| 🌙 **Dark mode** | One token block, inverted. Plus subtle sound cues you can silence |
+| 🔔 **Announcements** | A card in the corner when there's a new release — driven by [one JSON file in this repo](channel/) |
+
+Read and pinned state lives in **your browser, not on the IMAP server**.
+Deliberately: MailAegis fetches with `BODY.PEEK`, so connecting it never changes
+what your users see in Outlook. Writing `\Seen` back would break that promise the
+first time an analyst opened a message.
+
+---
+
 ## 🛠️ How it works
 
 ```
@@ -243,6 +290,9 @@ All configuration is environment variables (a local `.env` is loaded automatical
 | `MAILAEGIS_HOST` / `_PORT` | `127.0.0.1` / `4850` | API & UI bind address. |
 | `MAILAEGIS_API_TOKEN` | — | Require a bearer token on the API. |
 | `MAILAEGIS_OUT_DIR` | `./reports` | Where reports and labels are written. |
+| `MAILAEGIS_UPDATE_CHECK` | `true` | Poll the [announcement channel](channel/). `false` makes **no outbound request at all** — set it on air-gapped installs. |
+| `MAILAEGIS_UPDATE_FEED` | GitHub raw | Point at your own JSON to broadcast to your own fleet. |
+| `MAILAEGIS_UPDATE_TTL_MIN` | `360` | How long a fetched feed is cached. |
 
 Run `mailaegis doctor` to see exactly which engines are live.
 
