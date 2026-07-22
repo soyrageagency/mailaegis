@@ -3,20 +3,17 @@
   "schema": 1,
   "product": "MailAegis",
   "latest": {
-    "version": "1.3.0",
+    "version": "1.3.1",
     "published": "2026-07-22",
     "mandatory": false,
-    "notes": "Sender lists, an audit trail your SIEM can read, and undo send.",
+    "notes": "Fixes subjects in any language but English being read with a stray space.",
     "changelog": [
-      "Block or allow senders, by address or by whole domain — and an allow-list entry only counts when the message also proves it really came from them.",
-      "Audit trail of every decision, including the overrides, forwarded to your SIEM if you want it.",
-      "Undo send: six seconds to catch the wrong recipient.",
-      "Raw source viewer and one-click IOC copy, defanged and ready for a ticket.",
-      "A signature per mailbox, autosaved drafts, and auto-refresh that tells you what arrived.",
-      "Several mailboxes at once, compose with outbound scanning, search operators and dark mode.",
-      "Android app and an installable PWA, so a phone works too."
+      "Non-English subjects are decoded correctly. Long headers are split by the sender's mail client, and MailAegis was leaving a space at the break — so \"Confirmación de la transferencia\" was read as \"Confirmación de la  transferencia\", and every rule matching on the subject missed. Worth updating if you handle mail in any language but English.",
+      "Malformed API requests now answer 400 instead of 500.",
+      "Auto-refresh works in the \"All mailboxes\" view, which previously never updated.",
+      "1.3.0 also brought: sender allow/block lists, an audit trail and SIEM webhook, undo send, the raw source viewer and defanged IOC export."
     ],
-    "url": "https://github.com/soyrageagency/mailaegis/releases/tag/v1.3.0",
+    "url": "https://github.com/soyrageagency/mailaegis/releases/tag/v1.3.1",
     "downloads": {
       "win": "https://github.com/soyrageagency/mailaegis/releases/latest",
       "mac-arm64": "https://github.com/soyrageagency/mailaegis/releases/latest",
