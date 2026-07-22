@@ -314,6 +314,71 @@ await new Promise((r) => setTimeout(r, 150));
   ok("IMAP: skips \\Noselect folders", !folders.some((f) => f.name === "Skip"));
   fake.close();
 
+  // ---- Quarantine: the only write MailAegis makes ---------------------------
+  {
+    const { moveMessage } = await import("../dist/mailbox/imap.js");
+
+    /** A server that advertises the given capabilities and records commands. */
+    const mover = async (caps) => {
+      const sent = [];
+      const s = net.createServer((sock) => {
+        sock.write("* OK ready\r\n");
+        sock.on("data", (c) => {
+          const txt = c.toString().trim();
+          const tag = txt.split(" ")[0];
+          const up = txt.toUpperCase();
+          sent.push(txt.replace(/^\S+\s+/, ""));
+          if (up.includes("LOGIN")) sock.write(`${tag} OK\r\n`);
+          else if (up.includes("CAPABILITY")) sock.write(`* CAPABILITY IMAP4rev1 ${caps}\r\n${tag} OK\r\n`);
+          else if (up.includes("SELECT")) sock.write(`* 3 EXISTS\r\n${tag} OK [READ-WRITE]\r\n`);
+          else if (up.startsWith("A") && up.includes("CREATE")) sock.write(`${tag} NO [ALREADYEXISTS] already exists\r\n`);
+          else sock.write(`${tag} OK\r\n`);
+        });
+      });
+      await new Promise((r) => s.listen(0, "127.0.0.1", r));
+      return { s, sent, creds: { host: "127.0.0.1", port: s.address().port, user: "u", password: "p", tls: false, mailbox: "INBOX" } };
+    };
+
+    {
+      const { s, sent, creds } = await mover("MOVE UIDPLUS");
+      const r = await moveMessage(creds, 42, "Quarantine", 3000);
+      ok("quarantine: uses the atomic UID MOVE when offered", r.method === "move" && r.removed && sent.some((c) => /^UID MOVE 42 "Quarantine"$/i.test(c)), sent.join(" | "));
+      s.close();
+    }
+
+    {
+      const { s, sent, creds } = await mover("UIDPLUS");
+      const r = await moveMessage(creds, 42, "Quarantine", 3000);
+      // UID EXPUNGE, never a plain one: a bare EXPUNGE would also purge
+      // anything another client had already flagged deleted.
+      ok("quarantine: falls back to COPY + UID EXPUNGE", r.method === "copy-expunge" && r.removed
+        && sent.some((c) => /^UID COPY 42/i.test(c))
+        && sent.some((c) => /^UID STORE 42 \+FLAGS \(\\Deleted\)$/i.test(c))
+        && sent.some((c) => /^UID EXPUNGE 42$/i.test(c))
+        && !sent.some((c) => /^EXPUNGE$/i.test(c)), sent.join(" | "));
+      s.close();
+    }
+
+    {
+      const { s, sent, creds } = await mover("");
+      const r = await moveMessage(creds, 42, "Quarantine", 3000);
+      ok("quarantine: refuses to expunge when the server offers no safe way",
+        r.method === "copy-only" && r.removed === false && !sent.some((c) => /EXPUNGE/i.test(c)), sent.join(" | "));
+      s.close();
+    }
+
+    {
+      const { s, creds } = await mover("MOVE");
+      let msg = "";
+      await moveMessage(creds, 0, "Quarantine", 3000).catch((e) => { msg = e.message; });
+      ok("quarantine: refuses to act without a UID", /UID/i.test(msg), msg);
+      msg = "";
+      await moveMessage(creds, 42, "INBOX", 3000).catch((e) => { msg = e.message; });
+      ok("quarantine: refuses to move a message onto itself", /already in that folder/i.test(msg), msg);
+      s.close();
+    }
+  }
+
   // ---- Hostile or broken IMAP servers ---------------------------------------
   // The server is named by the user, so it is not trusted input: a compromised
   // or simply broken one must not be able to hang the analyser. A short

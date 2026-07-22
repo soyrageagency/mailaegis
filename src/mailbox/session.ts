@@ -21,7 +21,7 @@ import { demoMessages } from "../core/demo.js";
 import { parseMessage } from "../core/parse.js";
 import type { Analysis, Verdict } from "../core/types.js";
 import { deriveCategories, type CategoryStore, type ThreatCategory } from "./categories.js";
-import { fetchRecent, listMailboxes, type MailboxCredentials, type MailboxFolder } from "./imap.js";
+import { fetchRecent, listMailboxes, moveMessage, type MailboxCredentials, type MailboxFolder, type MoveResult } from "./imap.js";
 import { bareAddress, buildMime, envelopeRecipients, makeMessageId, type OutgoingMessage } from "./compose.js";
 import { smtpFor } from "./providers.js";
 import { sendMail } from "./smtp.js";
@@ -73,6 +73,8 @@ export interface MailboxStatus {
 interface Entry {
   item: InboxItem;
   analysis: Analysis;
+  /** The IMAP UID, needed to move the message. 0 for demo and sent items. */
+  uid: number;
   /**
    * The original bytes, kept so the message can be exported as .eml or its
    * raw source inspected. An analyst who cannot see the headers they are
@@ -365,6 +367,7 @@ export class MailboxSession {
     account.outbox.unshift({
       analysis,
       raw,
+      uid: 0,
       item: {
         id: analysis.id,
         accountId: account.view.id,
@@ -393,9 +396,46 @@ export class MailboxSession {
     };
   }
 
+  // ---- Quarantine ---------------------------------------------------------
+
+  /**
+   * Move a message out of the way.
+   *
+   * The only write MailAegis performs on a mailbox, and only when someone asks
+   * for it. The message is dropped from the local list on success so the
+   * result is visible immediately rather than at the next refresh.
+   */
+  async quarantine(messageId: string, folder: string): Promise<MoveResult & { account: string }> {
+    for (const account of this.accounts.values()) {
+      const index = account.entries.findIndex((e) => e.item.id === messageId);
+      if (index === -1) continue;
+
+      const entry = account.entries[index]!;
+      if (account.view.demo || !account.creds) {
+        throw new Error("This is the demo mailbox — there is nothing on a server to move.");
+      }
+      if (!entry.uid) {
+        throw new Error("This message has no UID, so it cannot be moved safely. Reconnect the mailbox and try again.");
+      }
+
+      const result = await moveMessage(account.creds, entry.uid, folder);
+      if (result.removed) {
+        account.entries.splice(index, 1);
+        account.view = {
+          ...account.view,
+          fetched: account.entries.length,
+          total: Math.max(0, account.view.total - 1),
+          counts: account.entries.reduce((acc, e) => { acc[e.item.verdict]++; return acc; }, zero()),
+        };
+      }
+      return { ...result, account: account.view.id };
+    }
+    throw new Error("Unknown message.");
+  }
+
   // ---- Analysis -----------------------------------------------------------
 
-  private async ingest(account: Account, messages: Array<{ seq: number; raw: Buffer }>, config: AppConfig): Promise<void> {
+  private async ingest(account: Account, messages: Array<{ seq: number; uid?: number; raw: Buffer }>, config: AppConfig): Promise<void> {
     const entries: Entry[] = [];
     const counts = zero();
 
@@ -407,6 +447,7 @@ export class MailboxSession {
       entries.push({
         analysis,
         raw: m.raw,
+        uid: m.uid ?? 0,
         item: {
           id: analysis.id,
           accountId: account.view.id,

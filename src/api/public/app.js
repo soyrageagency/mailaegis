@@ -893,6 +893,7 @@ function renderRead(a, item) {
         <button class="ghost sm" data-tool="source">${icon("code")} Source</button>
         <button class="ghost sm" data-tool="iocs">${icon("copy")} Copy IOCs</button>
         <button class="ghost sm" data-tool="eml">${icon("download")} .eml</button>
+        <button class="ghost sm danger" data-tool="quarantine">Quarantine</button>
         <button class="ghost sm danger" data-tool="block">Block sender</button>
         <button class="ghost sm" data-tool="allow">Allow sender</button>
       </div>` : ""}
@@ -985,6 +986,42 @@ async function messageTool(tool, a, item) {
   if (tool === "source") return showSource(a);
   if (tool === "iocs") return copyIocs(a);
   if (tool === "block" || tool === "allow") return listSender(tool === "block" ? "blocked" : "allowed", a);
+  if (tool === "quarantine") return quarantine(a, item);
+}
+
+/**
+ * Move the message out of the inbox on the server.
+ *
+ * The only thing MailAegis ever writes to a mailbox, so it asks first and
+ * names the folder — an action that changes what your users see should never
+ * be one careless click.
+ */
+async function quarantine(a, item) {
+  const folder = await dialog({
+    title: "Quarantine this message",
+    body: "It is moved out of the inbox on the server, into the folder below. This is the only change MailAegis ever makes to a mailbox — everything else is read-only.",
+    confirmLabel: "Move it",
+    danger: true,
+    input: "Quarantine",
+  });
+  if (!folder) return;
+
+  try {
+    const r = await api(`/api/mailbox/messages/${encodeURIComponent(a.id)}/move`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folder }),
+    });
+    S.status = r.status;
+    S.messages = r.messages;
+    clearRead();
+    renderRail(); renderList();
+    chime("sent");
+    // "copy-only" means the server has no safe way to remove the original, so
+    // say that plainly rather than claiming it moved.
+    toast(r.removed
+      ? `Moved to "${folder}".`
+      : `Copied to "${folder}" and flagged, but your server cannot remove the original safely — it is still in the inbox.`,
+      r.removed ? "" : "bad");
+  } catch (err) { toast(err.message, "bad"); }
 }
 
 /** The original bytes, so nobody has to take the tool's word for the headers. */

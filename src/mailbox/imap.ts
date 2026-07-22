@@ -4,7 +4,11 @@
  * Enough of RFC 3501 to do the one job MailAegis needs: log in, select a
  * mailbox, and pull the raw bytes of the most recent messages so they can be
  * analysed. Messages are fetched with `BODY.PEEK[]`, which does **not** set the
- * \Seen flag — connecting MailAegis never changes what your users see.
+ * \Seen flag — reading a mailbox leaves it exactly as it was found.
+ *
+ * There is exactly one write in this file: `moveMessage`, the quarantine
+ * action, and it happens only because a person pressed a button and named a
+ * folder. Nothing here ever writes on its own.
  *
  * Credentials are used for the length of a request and are never written to
  * disk by this module.
@@ -53,8 +57,14 @@ async function authenticate(session: ImapSession, creds: MailboxCredentials): Pr
 
 /** One fetched message. */
 export interface FetchedMessage {
-  /** IMAP sequence number. */
+  /** IMAP sequence number. Valid only for this session — it shifts on expunge. */
   seq: number;
+  /**
+   * The UID: stable for the life of the mailbox, and the only safe handle for
+   * a write. Sequence numbers renumber the moment anything is moved or
+   * deleted, so acting on one is how you quarantine the wrong message.
+   */
+  uid: number;
   raw: Buffer;
 }
 
@@ -191,17 +201,106 @@ export async function fetchRecent(
     }
 
     const first = Math.max(1, total - limit + 1);
-    const lines = await session.command(`FETCH ${first}:${total} (BODY.PEEK[])`);
+    const lines = await session.command(`FETCH ${first}:${total} (UID BODY.PEEK[])`);
     const bodies = session.takeLiterals();
-    // Sequence numbers appear on the "* <seq> FETCH (…{n}" lines, in the same
-    // order the literals arrived.
-    const seqs = lines
-      .filter((l) => /^\*\s+\d+\s+FETCH/i.test(l))
-      .map((l) => Number(/^\*\s+(\d+)/.exec(l)?.[1] ?? 0));
+    // Sequence numbers and UIDs both appear on the "* <seq> FETCH (UID <n> …"
+    // lines, in the same order the literals arrived.
+    const headers = lines.filter((l) => /^\*\s+\d+\s+FETCH/i.test(l));
+    const seqs = headers.map((l) => Number(/^\*\s+(\d+)/.exec(l)?.[1] ?? 0));
+    const uids = headers.map((l) => Number(/UID\s+(\d+)/i.exec(l)?.[1] ?? 0));
 
-    const messages: FetchedMessage[] = bodies.map((raw, i) => ({ seq: seqs[i] ?? first + i, raw }));
+    const messages: FetchedMessage[] = bodies.map((raw, i) => ({ seq: seqs[i] ?? first + i, uid: uids[i] ?? 0, raw }));
     await session.command("LOGOUT").catch(() => {});
     return { total, messages: messages.reverse() }; // newest first
+  } finally {
+    socket.destroy();
+  }
+}
+
+/**
+ * Move one message to another folder — the quarantine action.
+ *
+ * This is the **only** write MailAegis performs, and it happens solely because
+ * a person pressed a button. Everything else in this client is `BODY.PEEK` and
+ * leaves the mailbox exactly as it found it.
+ *
+ * Three routes, tried in order of safety:
+ *
+ *   `UID MOVE` (RFC 6851) is atomic — the server copies and removes in one
+ *   operation, and nothing is left behind if it fails halfway.
+ *
+ *   `UID COPY` + `UID STORE \Deleted` + `UID EXPUNGE` (RFC 4315) is the
+ *   fallback. The point of *UID* EXPUNGE is that it removes only the message
+ *   we just flagged; a plain EXPUNGE would also purge anything else in the
+ *   mailbox that someone had already marked deleted, in another client, an
+ *   hour ago.
+ *
+ *   If the server offers neither, we copy and flag but **refuse to expunge**,
+ *   and say so. Silently destroying mail that was not ours to destroy is worse
+ *   than an incomplete move.
+ */
+export interface MoveResult {
+  /** Which route was used: "move", "copy-expunge" or "copy-only". */
+  method: "move" | "copy-expunge" | "copy-only";
+  /** True when the original is gone from the source folder. */
+  removed: boolean;
+  /** Set when the folder had to be created first. */
+  createdFolder: boolean;
+}
+
+export async function moveMessage(
+  creds: MailboxCredentials,
+  uid: number,
+  target: string,
+  timeoutMs = 20000,
+): Promise<MoveResult> {
+  if (!Number.isInteger(uid) || uid <= 0) throw new Error("A valid message UID is required to move a message.");
+  const folder = target.trim();
+  if (!folder) throw new Error("Name the folder to move it to.");
+  if (folder.toLowerCase() === (creds.mailbox || "INBOX").toLowerCase()) {
+    throw new Error("The message is already in that folder.");
+  }
+
+  const socket = await openSocket(creds, timeoutMs);
+  const session = new ImapSession(socket, timeoutMs);
+  try {
+    await session.greeting();
+    await authenticate(session, creds);
+
+    const caps = (await session.command("CAPABILITY")).join(" ").toUpperCase();
+    const canMove = /\bMOVE\b/.test(caps);
+    const canUidExpunge = /\bUIDPLUS\b/.test(caps);
+
+    // SELECT, not EXAMINE: EXAMINE opens read-only and every write below
+    // would be refused.
+    await session.command(`SELECT ${quote(creds.mailbox || "INBOX")}`);
+
+    // Create the folder on demand. An ALREADYEXISTS is the normal answer on
+    // the second quarantine and is not an error.
+    let createdFolder = false;
+    try {
+      await session.command(`CREATE ${quote(folder)}`);
+      createdFolder = true;
+    } catch (err) {
+      if (!/ALREADYEXISTS|already exists/i.test((err as Error).message)) throw err;
+    }
+
+    if (canMove) {
+      await session.command(`UID MOVE ${uid} ${quote(folder)}`);
+      await session.command("LOGOUT").catch(() => {});
+      return { method: "move", removed: true, createdFolder };
+    }
+
+    await session.command(`UID COPY ${uid} ${quote(folder)}`);
+    await session.command(`UID STORE ${uid} +FLAGS (\\Deleted)`);
+
+    if (!canUidExpunge) {
+      await session.command("LOGOUT").catch(() => {});
+      return { method: "copy-only", removed: false, createdFolder };
+    }
+    await session.command(`UID EXPUNGE ${uid}`);
+    await session.command("LOGOUT").catch(() => {});
+    return { method: "copy-expunge", removed: true, createdFolder };
   } finally {
     socket.destroy();
   }

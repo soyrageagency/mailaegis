@@ -212,6 +212,32 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
         return json(res, 200, { status: mailbox.getStatus(), messages: mailbox.list() });
       }
 
+      // Quarantine — the only write MailAegis makes to a mailbox, and only
+      // ever because someone pressed a button.
+      if (/^\/api\/mailbox\/messages\/[^/]+\/move$/.test(path) && req.method === "POST") {
+        if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
+        const id = decodeURIComponent(path.split("/")[4]!);
+        const body = await jsonBody(req);
+        const folder = String(body.folder ?? "Quarantine").trim();
+        const analysis = mailbox.get(id);
+        try {
+          const result = await mailbox.quarantine(id, folder);
+          logger.info(`quarantine: ${id} → ${folder} (${result.method})`);
+          audit(config, {
+            action: "message.analysed",
+            id,
+            verdict: analysis?.verdict,
+            score: analysis?.score,
+            from: analysis?.message.from.address,
+            account: result.account,
+            detail: `moved to "${folder}" by ${result.method}${result.removed ? "" : " — the original could not be removed"}`,
+          });
+          return json(res, 200, { ...result, folder, status: mailbox.getStatus(), messages: mailbox.list() });
+        } catch (err) {
+          return json(res, 409, { error: (err as Error).message });
+        }
+      }
+
       // ---- Audit trail ----------------------------------------------------
       if (path === "/api/audit" && req.method === "GET") {
         if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });

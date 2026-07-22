@@ -316,6 +316,7 @@ deliberate press sends it anyway.
 | 🧾 **Raw source** | Headers, body or the lot, in a viewer — nobody should have to take the tool's word for a header |
 | 📋 **Copy IOCs** | Hashes, URLs, hosts and the originating IP, **defanged** (`hxxps://`, `evil[.]example`) and ready to paste into a ticket |
 | 🚫 **Block / allow senders** | Per address or per domain, with a note explaining why |
+| 🧯 **Quarantine** | Move a message out of the inbox on the server — the one write MailAegis makes, and only when you ask |
 | ↩️ **Undo send** | Six seconds to catch the wrong recipient — the only moment a mistake is still cheap |
 | ✍️ **Signatures & drafts** | One signature per mailbox; the composer autosaves and offers the draft back |
 | 🔄 **Auto-refresh** | Every two minutes, with a cue that tells you whether what arrived is clean or not |
@@ -600,8 +601,12 @@ With no API keys configured, MailAegis makes no outbound request at all.
 <summary><b>Will it mark my messages as read?</b></summary>
 
 No. Everything is fetched with IMAP `BODY.PEEK`, which does not set the `\Seen`
-flag. Connecting MailAegis never changes what your users see in Outlook — which
-is also why read/pinned state is kept in the browser rather than written back.
+flag, and read/pinned state is kept in your browser rather than written back —
+so reading a mailbox through MailAegis leaves it exactly as it was.
+
+The one exception is **quarantine**, which moves a message to another folder on
+the server. It only ever happens because you pressed the button and named the
+folder; nothing moves on its own, and every move is written to the audit trail.
 </details>
 
 <details>
