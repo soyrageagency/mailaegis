@@ -28,6 +28,7 @@ import { clamEnabled } from "../core/clamav.js";
 import { vtEnabled } from "../core/virustotal.js";
 import { demoMessages } from "../core/demo.js";
 import { readChannel } from "../core/updates.js";
+import { senderLists } from "../core/lists.js";
 import { MailboxSession } from "../mailbox/session.js";
 import { CategoryStore, THREAT_META } from "../mailbox/categories.js";
 import { PROVIDERS } from "../mailbox/providers.js";
@@ -73,6 +74,7 @@ function authorised(req: IncomingMessage, config: AppConfig): boolean {
 export function startServer(config: AppConfig, logger: Logger): Promise<void> {
   const categories = new CategoryStore(config.outDir);
   const mailbox = new MailboxSession(categories);
+  const lists = senderLists(config.outDir);
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -169,6 +171,32 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
 
       if (path === "/api/mailbox/messages" && req.method === "GET") {
         return json(res, 200, { status: mailbox.getStatus(), messages: mailbox.list() });
+      }
+
+      // ---- Sender allow / block lists -------------------------------------
+      if (path === "/api/lists" && req.method === "GET") {
+        return json(res, 200, lists.list());
+      }
+
+      if (path === "/api/lists" && req.method === "POST") {
+        if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
+        const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as { kind?: string; value?: string; note?: string };
+        const kind = body.kind === "allowed" ? "allowed" : "blocked";
+        try {
+          lists.add(kind, String(body.value ?? ""), String(body.note ?? ""));
+          logger.info(`policy: ${String(body.value ?? "")} added to the ${kind} list`);
+          return json(res, 200, lists.list());
+        } catch (err) {
+          return json(res, 400, { error: (err as Error).message });
+        }
+      }
+
+      if (path.startsWith("/api/lists/") && req.method === "DELETE") {
+        if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
+        const [, , , kindRaw, ...rest] = path.split("/");
+        const kind = kindRaw === "allowed" ? "allowed" : "blocked";
+        lists.remove(kind, decodeURIComponent(rest.join("/")));
+        return json(res, 200, lists.list());
       }
 
       // ---- Categories -----------------------------------------------------

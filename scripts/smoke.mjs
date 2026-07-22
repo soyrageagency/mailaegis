@@ -215,6 +215,35 @@ if (up) {
   ok("export: the filename cannot escape the download folder", !/[\\/]/.test((rawRes.headers.get("content-disposition") || "").split("filename=")[1] || ""));
   ok("export: an unknown id is a 404", (await fetch(`${B}/api/mailbox/messages/nope/raw`)).status === 404);
 
+  // ---- Sender lists over the API -------------------------------------------
+  const corpus = (await (await fetch(`${B}/api/samples`)).json()).samples;
+  const cleanSample = corpus.find((s) => s.id === "clean-invoice") || corpus[0];
+  const before = await (await fetch(`${B}/api/samples/${cleanSample.id}`, { method: "POST" })).json();
+  ok("policy: the sample is clean before any rule", before.verdict === "clean", `${before.verdict} ${before.score}`);
+
+  await post("/api/lists", { kind: "blocked", value: before.message.from.address, note: "smoke test" });
+  const blockedNow = await (await fetch(`${B}/api/samples/${cleanSample.id}`, { method: "POST" })).json();
+  ok("policy: blocking a sender makes it malicious whatever else was found",
+    blockedNow.verdict === "malicious" && blockedNow.findings.some((f) => f.rule === "sender-blocked"),
+    `${blockedNow.verdict} ${blockedNow.score}`);
+
+  await fetch(`${B}/api/lists/blocked/${encodeURIComponent(before.message.from.address)}`, { method: "DELETE" });
+  const unblocked = await (await fetch(`${B}/api/samples/${cleanSample.id}`, { method: "POST" })).json();
+  ok("policy: removing the rule restores the verdict", unblocked.verdict === "clean");
+
+  // The dangerous case: allow-listing a sender whose mail does not authenticate.
+  const bec = corpus.find((s) => s.id === "bec-ceo-fraud");
+  const becBefore = await (await fetch(`${B}/api/samples/${bec.id}`, { method: "POST" })).json();
+  await post("/api/lists", { kind: "allowed", value: becBefore.message.from.address, note: "smoke test" });
+  const becAfter = await (await fetch(`${B}/api/samples/${bec.id}`, { method: "POST" })).json();
+  ok("policy: an allow list does NOT rescue an unauthenticated sender",
+    becAfter.verdict === "malicious" && becAfter.findings.some((f) => f.rule === "allow-list-not-honoured"),
+    `${becAfter.verdict} ${becAfter.score}`);
+  await fetch(`${B}/api/lists/allowed/${encodeURIComponent(becBefore.message.from.address)}`, { method: "DELETE" });
+
+  const emptied = await (await fetch(`${B}/api/lists`)).json();
+  ok("policy: lists round-trip and clear", emptied.blocked.length === 0 && emptied.allowed.length === 0);
+
   // ---- Provider presets ----------------------------------------------------
   const { providers } = await (await fetch(`${B}/api/providers`)).json();
   ok("presets cover the big corporate platforms", ["microsoft365", "google-workspace", "mailcow"].every((id) => providers.some((p) => p.id === id)));
@@ -377,6 +406,31 @@ await new Promise((r) => setTimeout(r, 150));
   await sendMail(creds, "ana@corp.example", ["nope@partner.example"], raw).catch((e) => { threw = e.message; });
   ok("smtp: every recipient refused is an error", /Every recipient was refused/.test(threw), threw);
   fake.close();
+}
+
+// ---- Sender lists: the safety property is the whole point -------------------
+{
+  const { entryMatches, normaliseEntry, senderIsProven } = await import("../dist/core/lists.js");
+
+  ok("lists: an address rule matches only that address",
+    entryMatches("ana@corp.example", "ana@corp.example") && !entryMatches("ana@corp.example", "bob@corp.example"));
+  ok("lists: a domain rule matches the domain",
+    entryMatches("@corp.example", "anyone@corp.example") && !entryMatches("@corp.example", "anyone@other.example"));
+  ok("lists: a domain rule is not defeated by a subdomain",
+    entryMatches("@rival.example", "spam@mail.rival.example"));
+  ok("lists: a domain rule does not match a look-alike suffix",
+    !entryMatches("@rival.example", "spam@notrival.example"));
+  ok("lists: a bare domain is normalised to a domain rule",
+    normaliseEntry("Corp.Example") === "@corp.example" && normaliseEntry(" ana@Corp.Example ") === "ana@corp.example");
+
+  // The allow list must never take effect on an unauthenticated message: if it
+  // did, spoofing an allow-listed sender would be the cheapest way past every
+  // other engine.
+  ok("lists: DMARC pass proves the sender", senderIsProven({ spf: "none", dkim: "none", dmarc: "pass", alignmentMismatch: false }));
+  ok("lists: SPF+DKIM aligned proves the sender", senderIsProven({ spf: "pass", dkim: "pass", dmarc: "none", alignmentMismatch: false }));
+  ok("lists: SPF+DKIM misaligned does NOT prove the sender", !senderIsProven({ spf: "pass", dkim: "pass", dmarc: "none", alignmentMismatch: true }));
+  ok("lists: SPF alone does NOT prove the sender", !senderIsProven({ spf: "pass", dkim: "fail", dmarc: "none", alignmentMismatch: false }));
+  ok("lists: a DMARC failure never proves the sender", !senderIsProven({ spf: "pass", dkim: "pass", dmarc: "fail", alignmentMismatch: false }));
 }
 
 // ---- Update channel: the rules that decide whether a user gets nagged -------

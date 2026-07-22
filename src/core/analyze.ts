@@ -19,6 +19,7 @@ import { evaluateAuth } from "./auth.js";
 import { clamEnabled, scanAttachment } from "./clamav.js";
 import { runHeuristics } from "./engine.js";
 import { hybridEnabled, lookupHash } from "./hybrid.js";
+import { senderLists } from "./lists.js";
 import { parseMessage } from "./parse.js";
 import { buildTrace, traceFindings } from "./trace.js";
 import type { Analysis, Finding, ParsedMessage, Verdict } from "./types.js";
@@ -155,7 +156,48 @@ export async function analyzeParsed(message: ParsedMessage, config: AppConfig): 
     }
   }
 
-  const score = Math.min(100, findings.reduce((sum, f) => sum + f.score, 0));
+  // ---- Sender lists -------------------------------------------------------
+  // Applied last, so a decision is made against everything the engines found
+  // rather than short-circuiting them: a block still shows you why the message
+  // was bad, and an allow still shows you what it suppressed.
+  const decision = senderLists(config.outDir).decide(message.from.address, auth);
+
+  if (decision.blocked) {
+    findings.push({
+      rule: "sender-blocked", severity: "critical", source: "policy",
+      title: "The sender is on your block list",
+      detail: decision.blocked.note
+        ? `Blocked by "${decision.blocked.value}" — ${decision.blocked.note}`
+        : `Blocked by the rule "${decision.blocked.value}".`,
+      score: 100, evidence: message.from.address,
+    });
+  }
+
+  // Only findings the heuristic engine raised can be waived, and only for a
+  // sender that proved who it is. A scanner detection is never waived.
+  const waivable = new Set(["heuristics", "auth"]);
+  const suppressed = decision.allowHonoured
+    ? findings.filter((f) => waivable.has(f.source) && f.severity !== "critical")
+    : [];
+  const counted = suppressed.length ? findings.filter((f) => !suppressed.includes(f)) : findings;
+
+  if (decision.allowed && !decision.allowHonoured) {
+    findings.push({
+      rule: "allow-list-not-honoured", severity: "medium", source: "policy",
+      title: "Allow-listed sender, but the message did not authenticate",
+      detail: `"${decision.allowed.value}" is on your allow list, which is why this was not waived: the message fails DMARC (and SPF/DKIM alignment), so there is nothing proving it really came from them. Spoofing an allow-listed sender is the cheapest way past a filter.`,
+      score: 10, evidence: message.from.address,
+    });
+  } else if (suppressed.length) {
+    findings.push({
+      rule: "allow-list-applied", severity: "info", source: "policy",
+      title: `Allow list waived ${suppressed.length} heuristic finding(s)`,
+      detail: `"${decision.allowed!.value}" is on your allow list and the message authenticated, so tone and identity heuristics were not counted. Scanner detections are never waived.`,
+      score: 0, evidence: suppressed.map((f) => f.title).join("; "),
+    });
+  }
+
+  const score = Math.min(100, counted.reduce((sum, f) => sum + f.score, 0));
   const verdict = verdictFor(score, config);
   const critical = findings.filter((f) => f.severity === "critical").length;
   const high = findings.filter((f) => f.severity === "high").length;

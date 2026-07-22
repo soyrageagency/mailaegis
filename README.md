@@ -312,6 +312,32 @@ deliberate press sends it anyway.
 | 💾 **Export** | Download the original bytes as `.eml` — the source, headers and all |
 | 🌙 **Dark mode** | One token block, inverted. Plus subtle sound cues you can silence |
 | 🔔 **Announcements** | A card in the corner when there's a new release — driven by [one JSON file in this repo](channel/) |
+| 🧾 **Raw source** | Headers, body or the lot, in a viewer — nobody should have to take the tool's word for a header |
+| 📋 **Copy IOCs** | Hashes, URLs, hosts and the originating IP, **defanged** (`hxxps://`, `evil[.]example`) and ready to paste into a ticket |
+| 🚫 **Block / allow senders** | Per address or per domain, with a note explaining why |
+
+### About that allow list
+
+The two halves are deliberately asymmetric, because they carry very different
+risk.
+
+**Blocking is unconditional.** A blocked sender is marked malicious no matter how
+clean the message looks.
+
+**Allowing is not.** An allow list that simply zeroes the score is the most
+dangerous feature an email security tool can ship: the moment a supplier is on
+it, spoofing that supplier becomes the cheapest way past every other engine —
+and spoofing a `From` address costs nothing.
+
+So an entry only takes effect when the message **also proves it is really from
+that sender**: DMARC `pass`, or SPF *and* DKIM both passing and aligned. An
+explicit DMARC failure is never overridden. An unauthenticated message from an
+allow-listed address is scored exactly as if the list were empty, **and the
+report tells you that is what happened**.
+
+Even then, allowing only suppresses *heuristic* suspicion — tone, urgency,
+look-alike scoring. A ClamAV hit, a VirusTotal detection or a sandbox verdict is
+never waived: a trusted supplier with a compromised mailbox is a normal Tuesday.
 
 Read and pinned state lives in **your browser, not on the IMAP server**.
 Deliberately: MailAegis fetches with `BODY.PEEK`, so connecting it never changes

@@ -216,7 +216,12 @@ function chime(kind) {
  * exactly the chrome a phishing page wears. Our own dialogs look like the
  * product they belong to.
  */
-function dialog({ title, body = "", html = "", wide = false, confirmLabel = "Confirm", cancelLabel = "Cancel", danger = false, input = null }) {
+/*
+ * `collect` runs while the dialog is still on screen and its return value is
+ * what the promise resolves with. Reading fields after the await would be a
+ * race against the closing animation.
+ */
+function dialog({ title, body = "", html = "", wide = false, confirmLabel = "Confirm", cancelLabel = "Cancel", danger = false, input = null, collect = null }) {
   return new Promise((resolve) => {
     const host = document.createElement("div");
     host.className = "modal";
@@ -246,7 +251,7 @@ function dialog({ title, body = "", html = "", wide = false, confirmLabel = "Con
       document.removeEventListener("keydown", onKey);
       resolve(value);
     };
-    const accept = () => done(field ? field.value.trim() : true);
+    const accept = () => done(collect ? collect(host) : field ? field.value.trim() : true);
     const onKey = (e) => {
       if (e.key === "Escape") { e.preventDefault(); done(null); }
       if (e.key === "Enter" && field) { e.preventDefault(); accept(); }
@@ -882,6 +887,12 @@ function renderRead(a, item) {
         <button class="ghost sm" data-act="reply">Reply</button>
         <button class="ghost sm" data-act="replyAll">Reply all</button>
         <button class="ghost sm" data-act="forward">Forward</button>
+        <span class="rsep"></span>
+        <button class="ghost sm" data-tool="source">${icon("code")} Source</button>
+        <button class="ghost sm" data-tool="iocs">${icon("copy")} Copy IOCs</button>
+        <button class="ghost sm" data-tool="eml">${icon("download")} .eml</button>
+        <button class="ghost sm danger" data-tool="block">Block sender</button>
+        <button class="ghost sm" data-tool="allow">Allow sender</button>
       </div>` : ""}
       <div class="rtags">
         ${threat.filter((t) => t !== "clean").map((t) => `<span class="tag" style="background:${esc((S.threats[t] || {}).colour || "#8b8b86")}">${esc((S.threats[t] || {}).label || t)}</span>`).join("")}
@@ -960,8 +971,140 @@ function renderRead(a, item) {
   const actions = $("#read").querySelector(".ractions");
   if (actions) actions.addEventListener("click", (e) => {
     const b = e.target.closest("[data-act]");
-    if (b) openComposer(b.dataset.act, a, item);
+    if (b) { openComposer(b.dataset.act, a, item); return; }
+    const t = e.target.closest("[data-tool]");
+    if (t) messageTool(t.dataset.tool, a, item);
   });
+}
+
+// ------------------------------------------------------- analyst utilities
+async function messageTool(tool, a, item) {
+  if (tool === "eml") return exportMessages([a.id]);
+  if (tool === "source") return showSource(a);
+  if (tool === "iocs") return copyIocs(a);
+  if (tool === "block" || tool === "allow") return listSender(tool === "block" ? "blocked" : "allowed", a);
+}
+
+/** The original bytes, so nobody has to take the tool's word for the headers. */
+async function showSource(a) {
+  let raw = "";
+  try {
+    raw = await (await fetch(`/api/mailbox/messages/${encodeURIComponent(a.id)}/raw`)).text();
+  } catch (err) { toast("Could not read the source.", "bad"); return; }
+
+  const split = raw.search(/\r?\n\r?\n/);
+  const headers = split === -1 ? raw : raw.slice(0, split);
+  const body = split === -1 ? "" : raw.slice(split).replace(/^\r?\n\r?\n/, "");
+
+  dialog({
+    title: "Message source",
+    wide: true,
+    confirmLabel: "Close",
+    cancelLabel: "",
+    html: `
+      <div class="srctabs">
+        <button class="srctab active" data-src="h">Headers</button>
+        <button class="srctab" data-src="b">Body</button>
+        <button class="srctab" data-src="a">Everything</button>
+        <button class="srccopy" data-src-copy>Copy</button>
+      </div>
+      <pre class="src-view" id="srcView">${esc(headers)}</pre>`,
+  });
+
+  const modals = document.querySelectorAll(".modal");
+  const host = modals[modals.length - 1];
+  const view = host.querySelector("#srcView");
+  host.querySelector(".srctabs").addEventListener("click", async (e) => {
+    if (e.target.closest("[data-src-copy]")) {
+      await copyText(view.textContent);
+      return;
+    }
+    const b = e.target.closest("[data-src]"); if (!b) return;
+    host.querySelectorAll(".srctab").forEach((t) => t.classList.toggle("active", t === b));
+    view.textContent = b.dataset.src === "h" ? headers : b.dataset.src === "b" ? body : raw;
+  });
+}
+
+/** Clipboard, with a fallback for the non-secure contexts a LAN address gives. */
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && isSecureContext) await navigator.clipboard.writeText(text);
+    else {
+      const box = document.createElement("textarea");
+      box.value = text;
+      box.style.cssText = "position:fixed;opacity:0";
+      document.body.appendChild(box);
+      box.select();
+      document.execCommand("copy");
+      box.remove();
+    }
+    toast("Copied to the clipboard.");
+  } catch { toast("Could not copy — your browser blocked it.", "bad"); }
+}
+
+/**
+ * The indicators a ticket actually needs, defanged.
+ *
+ * URLs are written `hxxps://` and dots in hosts bracketed, which is the
+ * convention for a reason: pasting a live phishing link into a chat window
+ * that auto-previews it fetches the page from your own network.
+ */
+function copyIocs(a) {
+  const defang = (s) => String(s).replace(/^http/i, "hxxp").replace(/\./g, "[.]");
+  const lines = [`# MailAegis ${a.id} — ${a.verdict} (${a.score}/100)`, `# ${a.analysedAt}`, ""];
+
+  lines.push(`from: ${a.message.from.address}`);
+  if (a.message.replyTo) lines.push(`reply-to: ${a.message.replyTo.address}`);
+  lines.push(`subject: ${a.message.subject}`, "");
+
+  if (a.trace && a.trace.originatingIp) {
+    lines.push("# originating IP", defang(a.trace.originatingIp) + (a.trace.originatingHost ? `  (${a.trace.originatingHost})` : ""), "");
+  }
+  if (a.attachments.length) {
+    lines.push("# attachment SHA-256");
+    for (const f of a.attachments) lines.push(`${f.sha256}  ${f.filename}`);
+    lines.push("");
+  }
+  if (a.urls.length) {
+    lines.push("# URLs (defanged)");
+    for (const u of a.urls) lines.push(defang(u.url));
+    lines.push("");
+  }
+  const hosts = [...new Set(a.urls.map((u) => u.host).filter(Boolean))];
+  if (hosts.length) { lines.push("# hosts (defanged)"); for (const h of hosts) lines.push(defang(h)); }
+
+  copyText(lines.join("\n"));
+}
+
+async function listSender(kind, a) {
+  const address = a.message.from.address;
+  const domain = address.split("@").pop();
+  const blocking = kind === "blocked";
+
+  const choice = await dialog({
+    title: blocking ? "Block this sender" : "Allow this sender",
+    body: blocking
+      ? "Blocked mail is marked malicious whatever else the engines find."
+      : "An allow-list entry only takes effect when the message also passes DMARC — otherwise anyone could reach you by spoofing this address. It never waives a ClamAV, VirusTotal or sandbox detection.",
+    wide: true,
+    confirmLabel: blocking ? "Block" : "Allow",
+    html: `
+      <div class="mpick">
+        <label class="mopt"><input type="radio" name="scope" value="${esc(address)}" checked /><span class="mono">${esc(address)}</span><span class="muted">just this address</span></label>
+        <label class="mopt"><input type="radio" name="scope" value="@${esc(domain)}" /><span class="mono">@${esc(domain)}</span><span class="muted">the whole domain</span></label>
+      </div>
+      <input class="minput" id="listNote" placeholder="Why? (optional — for whoever reads this in six months)" />`,
+    collect: (host) => ({
+      value: (host.querySelector("input[name=scope]:checked") || {}).value || address,
+      note: (host.querySelector("#listNote") || {}).value || "",
+    }),
+  });
+  if (!choice) return;
+
+  try {
+    await api("/api/lists", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind, value: choice.value, note: choice.note }) });
+    toast(`${choice.value} added to the ${blocking ? "block" : "allow"} list. Reconnect to re-score existing mail.`);
+  } catch (err) { toast(err.message, "bad"); }
 }
 
 // --------------------------------------------------------------- composer

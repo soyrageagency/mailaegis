@@ -88,7 +88,8 @@ export interface Finding {
   /** Points contributed to the risk score. */
   score: number;
   /** Which subsystem raised it. */
-  source: "heuristics" | "auth" | "virustotal" | "clamav" | "trace" | "hybrid";
+  /** `policy` is your own decision — the sender allow and block lists. */
+  source: "heuristics" | "auth" | "virustotal" | "clamav" | "trace" | "hybrid" | "policy";
   /** Optional evidence (filename, URL, hash…). */
   evidence?: string;
 }
