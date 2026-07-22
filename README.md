@@ -626,6 +626,11 @@ All configuration is environment variables (a local `.env` is loaded automatical
 | `MAILAEGIS_UPDATE_CHECK` | `true` | Poll the [announcement channel](channel/). `false` makes **no outbound request at all** — set it on air-gapped installs. |
 | `MAILAEGIS_UPDATE_FEED` | GitHub raw | Point at your own JSON to broadcast to your own fleet. |
 | `MAILAEGIS_UPDATE_TTL_MIN` | `360` | How long a fetched feed is cached. |
+| `MAILAEGIS_LOG_LEVEL` | `info` | `debug` · `info` · `warn` · `error`. |
+| `MAILAEGIS_MAX_ATTACHMENT_MB` | `25` | Attachments larger than this are recorded but not hashed or scanned. |
+| `IMAP_FETCH_LIMIT` | `25` | How many recent messages to pull per folder. |
+| `VIRUSTOTAL_ENDPOINT` · `HYBRID_ANALYSIS_ENDPOINT` | vendor URLs | **Point the cloud lookups at your own proxy** — useful when egress is filtered. |
+| `VIRUSTOTAL_TIMEOUT_MS` · `HYBRID_ANALYSIS_TIMEOUT_MS` · `CLAMAV_TIMEOUT_MS` | `8000` · `8000` · `15000` | Per-request budgets. A slow scanner degrades the verdict; it never blocks delivery. |
 
 Run `mailaegis doctor` to see exactly which engines are live.
 
@@ -633,13 +638,45 @@ Run `mailaegis doctor` to see exactly which engines are live.
 
 ## 🔒 Privacy & safety
 
-- **VirusTotal receives only SHA-256 hashes, URL identifiers and the originating IP** — never file contents, never message bodies.
-- **Hybrid Analysis is only ever *searched by hash*** (`GET /search/hash`) — MailAegis never submits a file for detonation.
-- **ClamAV runs on your own infrastructure**; attachment bytes never leave your network.
-- **IMAP uses `BODY.PEEK`**, so connecting MailAegis never marks mail as read.
-- **Credentials are never written to disk** and never returned by the API; they live in the process only while you are connected.
-- The API **binds to `127.0.0.1`** by default.
-- The bundled "malicious" samples carry the **EICAR test string** — never real malware.
+### Every connection MailAegis can make
+
+Not "the important ones" — all of them. If it is not in this table, the code
+does not do it.
+
+| To | When | What is sent |
+| --- | --- | --- |
+| **Your IMAP server** | You connect a mailbox | Your credentials, and `BODY.PEEK` fetches |
+| **Your SMTP server** | You send a message | The message you wrote |
+| **Your clamd** | An attachment is scanned | The attachment bytes — **on your own infrastructure** |
+| **VirusTotal** | A key is configured | `GET` only: a SHA-256, a URL identifier, an IP. **Never file contents, never message bodies** |
+| **Hybrid Analysis** | A key is configured | `GET /search/hash` only. **MailAegis never submits a file for detonation** |
+| **Microsoft / Google** | You use OAuth | Your refresh token, to get an access token |
+| **Your webhook** | You set `MAILAEGIS_WEBHOOK_URL` | Audit events — verdicts and rule *names*, **never subjects or bodies** |
+| **raw.githubusercontent.com** | Every 6 h, unless disabled | Nothing but the request itself: no identifier, no telemetry. It fetches [one JSON file](channel/) and compares versions **inside your own process** |
+
+**`MAILAEGIS_UPDATE_CHECK=false` removes the last one**, and with no API keys
+configured the middle four never happen. An air-gapped install makes **no
+outbound request at all** — and `VIRUSTOTAL_ENDPOINT` / `HYBRID_ANALYSIS_ENDPOINT`
+let you route the optional ones through your own proxy.
+
+### The rest
+
+- **Reading a mailbox leaves it exactly as it was.** `BODY.PEEK` never sets
+  `\Seen`, and read/pinned state is kept in your browser rather than written
+  back. **[Quarantine](#-the-mail-client) is the single exception** — it moves a
+  message, only when you press the button, and every move is audited.
+- **Credentials are never written to disk by MailAegis** and never returned by
+  the API; they live in the process only while you are connected. The one
+  credential that does rest on disk is the OAuth refresh token, because *you*
+  put it in your `.env` — treat that file accordingly.
+- **The audit trail records decisions, not mail.** Rule names travel; the
+  evidence they matched on does not.
+- **The API binds to `127.0.0.1`** by default — **except in the container**,
+  where `127.0.0.1` would be unreachable, so the image binds `0.0.0.0` and the
+  published port is pinned to loopback on the host. Set `MAILAEGIS_API_TOKEN`
+  there.
+- The bundled "malicious" samples carry the **EICAR test string** — never real
+  malware.
 
 ---
 

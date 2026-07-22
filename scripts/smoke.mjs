@@ -594,6 +594,37 @@ await new Promise((r) => setTimeout(r, 150));
 
   // The same for source files: a structure diagram nobody maintains is a map
   // to a building that has been extended twice.
+  // Every environment variable the code reads must be documented, or an
+  // operator cannot tune what they cannot see. The README abbreviates related
+  // groups (`IMAP_HOST` / `_PORT` / `_USER`), so a suffix match counts.
+  const configSrc = readFileSync("src/config.ts", "utf8");
+  const vars = [...configSrc.matchAll(/(?:str|num|flag|list)\("([A-Z_]{4,})"/g)].map((m) => m[1]);
+  const undocumentedVars = [...new Set(vars)].filter((v) => {
+    if (readme.includes(v)) return false;
+    // `MAILAEGIS_SUSPICIOUS_SCORE` / `_QUARANTINE_SCORE` style abbreviation.
+    const tail = v.replace(/^[A-Z]+_/, "_");
+    return !readme.includes(`\`${tail}\``) && !readme.includes(`${tail}\``);
+  }).sort();
+  ok("docs: every configuration variable is documented", undocumentedVars.length === 0,
+    undocumentedVars.length ? `missing: ${undocumentedVars.join(", ")}` : "");
+
+  // The privacy section lists every outbound connection. A new one that does
+  // not appear there is the kind of omission that destroys trust when a user
+  // finds it themselves rather than reading it.
+  const outbound = [
+    ["virustotal", "core/virustotal.ts"],
+    ["Hybrid Analysis", "core/hybrid.ts"],
+    ["webhook", "core/audit.ts"],
+    ["raw.githubusercontent.com", "core/updates.ts"],
+    ["OAuth", "mailbox/oauth.ts"],
+    ["IMAP", "mailbox/imap.ts"],
+    ["SMTP", "mailbox/smtp.ts"],
+  ];
+  const privacy = /### Every connection MailAegis can make([\s\S]*?)### The rest/.exec(readme)?.[1] ?? "";
+  const unlisted = outbound.filter(([label]) => !privacy.toLowerCase().includes(label.toLowerCase())).map(([, f]) => f);
+  ok("docs: every outbound connection is listed under Privacy", unlisted.length === 0,
+    unlisted.length ? `missing: ${unlisted.join(", ")}` : "");
+
   const structure = /## 🗂️ Project structure([\s\S]*?)```\s*\n\s*---/.exec(readme)?.[1] ?? "";
   const sources = readdirSync("src/core").concat(readdirSync("src/mailbox")).filter((f) => f.endsWith(".ts"));
   const missing = sources.filter((f) => !structure.includes(f));
