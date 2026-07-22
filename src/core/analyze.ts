@@ -18,9 +18,11 @@ import type { AppConfig } from "../config.js";
 import { evaluateAuth } from "./auth.js";
 import { clamEnabled, scanAttachment } from "./clamav.js";
 import { runHeuristics } from "./engine.js";
+import { hybridEnabled, lookupHash } from "./hybrid.js";
 import { parseMessage } from "./parse.js";
+import { buildTrace, traceFindings } from "./trace.js";
 import type { Analysis, Finding, ParsedMessage, Verdict } from "./types.js";
-import { lookupFile, lookupUrl, vtEnabled } from "./virustotal.js";
+import { lookupFile, lookupIp, lookupUrl, vtEnabled } from "./virustotal.js";
 
 /** Cap the number of URLs sent to VirusTotal (public API quotas are small). */
 const MAX_URL_LOOKUPS = 20;
@@ -43,6 +45,10 @@ export function verdictFor(score: number, config: AppConfig): Verdict {
 export async function analyzeParsed(message: ParsedMessage, config: AppConfig): Promise<Analysis> {
   const auth = evaluateAuth(message);
   const findings: Finding[] = runHeuristics(message, auth, config);
+
+  // ---- Delivery path ------------------------------------------------------
+  const trace = buildTrace(message.received);
+  findings.push(...traceFindings(trace, message.from.domain));
 
   const scannable = message.attachments.filter((a) => a.size <= config.maxAttachmentMb * 1024 * 1024);
 
@@ -104,6 +110,51 @@ export async function analyzeParsed(message: ParsedMessage, config: AppConfig): 
     }
   }
 
+  // ---- Hybrid Analysis (behavioural sandbox verdicts) ---------------------
+  const hybrid = hybridEnabled(config) ? await Promise.all(scannable.map((a) => lookupHash(a, config))) : [];
+  for (const h of hybrid) {
+    if (h.error) {
+      findings.push({ rule: "hybrid-error", severity: "info", source: "hybrid", title: "Hybrid Analysis lookup failed", detail: h.error, score: 2 });
+      continue;
+    }
+    if (h.verdict === "malicious") {
+      findings.push({
+        rule: "hybrid-malicious", severity: "critical", source: "hybrid",
+        title: "Sandbox detonation says malicious",
+        detail: `Hybrid Analysis scored ${h.threatScore}/100 (${h.threatLevel || "malicious"})${h.avDetect ? `, ${h.avDetect}% of AV engines agree` : ""}.`,
+        score: 45, evidence: h.submitName || h.sha256,
+      });
+    } else if (h.verdict === "suspicious") {
+      findings.push({
+        rule: "hybrid-suspicious", severity: "high", source: "hybrid",
+        title: "Sandbox detonation says suspicious",
+        detail: `Hybrid Analysis scored ${h.threatScore}/100 in ${h.environment || "a sandbox"}.`,
+        score: 24, evidence: h.submitName || h.sha256,
+      });
+    }
+  }
+
+  // ---- Reputation of the IP the message really came from ------------------
+  let ipReputation;
+  if (vtEnabled(config) && trace.originatingIp) {
+    ipReputation = await lookupIp(trace.originatingIp, config);
+    if (ipReputation.malicious >= config.vtMaliciousThreshold) {
+      findings.push({
+        rule: "origin-ip-reputation", severity: "high", source: "virustotal",
+        title: "The originating IP has a bad reputation",
+        detail: `${trace.originatingIp} is flagged by ${ipReputation.malicious} engines${ipReputation.detections.length ? ` (${ipReputation.detections.slice(0, 2).join("; ")})` : ""}.`,
+        score: 28, evidence: trace.originatingIp,
+      });
+    } else if (ipReputation.malicious > 0 || ipReputation.suspicious > 0) {
+      findings.push({
+        rule: "origin-ip-low-reputation", severity: "medium", source: "virustotal",
+        title: "The originating IP has some detections",
+        detail: `${trace.originatingIp}: ${ipReputation.malicious} malicious / ${ipReputation.suspicious} suspicious.`,
+        score: 12, evidence: trace.originatingIp,
+      });
+    }
+  }
+
   const score = Math.min(100, findings.reduce((sum, f) => sum + f.score, 0));
   const verdict = verdictFor(score, config);
   const critical = findings.filter((f) => f.severity === "critical").length;
@@ -136,16 +187,20 @@ export async function analyzeParsed(message: ParsedMessage, config: AppConfig): 
       urlCount: message.urls.length,
     },
     auth,
+    trace: { ...trace, ipReputation },
     findings: findings.sort((a, b) => b.score - a.score),
     attachments: message.attachments.map(({ content, ...rest }) => { void content; return rest; }),
     urls: message.urls,
     virustotal,
     clamav,
+    hybrid,
     engines: [
       { name: "Heuristics (MailAegis)", ran: true, note: "always on" },
       { name: "SPF / DKIM / DMARC", ran: true, note: "read from Authentication-Results" },
+      { name: "Delivery path", ran: trace.hops.length > 0, note: trace.hops.length ? `${trace.hops.length} hop(s) reconstructed from Received headers` : "no Received headers present" },
       { name: "ClamAV", ran: clamEnabled(config), note: config.demo ? "simulated (demo mode)" : config.clamHost ? `clamd at ${config.clamHost}:${config.clamPort}` : "not configured — set CLAMAV_HOST" },
-      { name: "VirusTotal", ran: vtEnabled(config), note: config.demo ? "simulated (demo mode)" : config.vtApiKey ? "API v3 hash & URL lookup" : "not configured — set VIRUSTOTAL_API_KEY" },
+      { name: "VirusTotal", ran: vtEnabled(config), note: config.demo ? "simulated (demo mode)" : config.vtApiKey ? "API v3 file, URL & IP lookup" : "not configured — set VIRUSTOTAL_API_KEY" },
+      { name: "Hybrid Analysis", ran: hybridEnabled(config), note: config.demo ? "simulated (demo mode)" : config.hybridApiKey ? "Falcon Sandbox hash search" : "not configured — set HYBRID_ANALYSIS_API_KEY" },
     ],
   };
 }

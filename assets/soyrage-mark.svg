@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="SoyRage Agency">
+  <!--
+    SoyRage Agency monogram — the angular "R" mark.
+    Uses currentColor so it inherits the surrounding text colour.
+    Crafted by SoyRage Agency — https://soyrage.es/
+  -->
+  <g fill="currentColor">
+    <!-- R body: stem, angular bowl (counter cut out) and a blade leg -->
+    <path fill-rule="evenodd" clip-rule="evenodd"
+          d="M20 12 H68 L92 32 V54 L72 69 L101 108 H73 L51 74 H42 V108 H20 Z
+             M42 32 V56 H64 L74 48 V40 L64 32 Z"/>
+    <!-- Signature shard slicing off the top-right -->
+    <path d="M78 6 H106 L86 28 Z"/>
+  </g>
+</svg>

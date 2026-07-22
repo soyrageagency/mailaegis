@@ -87,16 +87,16 @@ export interface Finding {
   /** Points contributed to the risk score. */
   score: number;
   /** Which subsystem raised it. */
-  source: "heuristics" | "auth" | "virustotal" | "clamav";
+  source: "heuristics" | "auth" | "virustotal" | "clamav" | "trace" | "hybrid";
   /** Optional evidence (filename, URL, hash…). */
   evidence?: string;
 }
 
 /** A VirusTotal lookup outcome for one file hash or URL. */
 export interface VtResult {
-  /** The hash or URL that was looked up. */
+  /** The hash, URL or IP that was looked up. */
   target: string;
-  kind: "file" | "url";
+  kind: "file" | "url" | "ip";
   /** True when VirusTotal had never seen it. */
   unknown: boolean;
   malicious: number;
@@ -108,6 +108,50 @@ export interface VtResult {
   /** Permalink for an analyst. */
   link?: string;
   /** Set when the lookup failed. */
+  error?: string;
+}
+
+/** One hop in the delivery path, reconstructed from a `Received:` header. */
+export interface Hop {
+  /** 0 = origin, last = your own MTA. */
+  index: number;
+  /** The name the sending host introduced itself as (HELO/EHLO). */
+  from: string;
+  /** Reverse DNS the receiving MTA resolved for the connecting IP. */
+  rdns: string;
+  /** The connecting IP address. */
+  ip: string;
+  privateIp: boolean;
+  /** The host that accepted this hop. */
+  by: string;
+  protocol: string;
+  id: string;
+  recipient: string;
+  /** ISO timestamp, or "" when unparseable. */
+  date: string;
+  /** Seconds spent since the previous hop. */
+  delaySec: number;
+  raw: string;
+}
+
+/** A Hybrid Analysis (Falcon Sandbox) lookup outcome for one file. */
+export interface HybridResult {
+  /** SHA-256 that was searched. */
+  sha256: string;
+  /** True when the sandbox has never seen the file. */
+  unknown: boolean;
+  /** "malicious" | "suspicious" | "no specific threat" | "whitelisted" | "". */
+  verdict: string;
+  /** 0–100 sandbox threat score. */
+  threatScore: number;
+  threatLevel: string;
+  /** Percentage of AV engines that flagged it. */
+  avDetect: number;
+  /** The name the sample was submitted under. */
+  submitName: string;
+  fileType: string;
+  environment: string;
+  link?: string;
   error?: string;
 }
 
@@ -146,11 +190,21 @@ export interface Analysis {
     urlCount: number;
   };
   auth: AuthResults;
+  /** The reconstructed delivery path: every hop, and where it really came from. */
+  trace: {
+    hops: Hop[];
+    originatingIp: string;
+    originatingHost: string;
+    transitSec: number;
+    /** Reputation of the originating IP, when it could be checked. */
+    ipReputation?: VtResult;
+  };
   findings: Finding[];
   attachments: Array<Omit<Attachment, "content">>;
   urls: UrlRef[];
   virustotal: VtResult[];
   clamav: ClamResult[];
+  hybrid: HybridResult[];
   /** Which engines actually ran (for honest evidence). */
   engines: Array<{ name: string; ran: boolean; note: string }>;
 }

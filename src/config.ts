@@ -57,6 +57,11 @@ export interface AppConfig {
   /** Per-request timeout (ms) for VirusTotal. */
   readonly vtTimeoutMs: number;
 
+  /** Hybrid Analysis (Falcon Sandbox) API key. Empty disables the enrichment. */
+  readonly hybridApiKey: string;
+  readonly hybridEndpoint: string;
+  readonly hybridTimeoutMs: number;
+
   /** clamd host (TCP). Empty disables the ClamAV scan. */
   readonly clamHost: string;
   readonly clamPort: number;
@@ -107,6 +112,10 @@ export function loadConfig(): AppConfig {
     vtEndpoint: str("VIRUSTOTAL_ENDPOINT", "https://www.virustotal.com/api/v3").replace(/\/+$/, ""),
     vtMaliciousThreshold: num("VIRUSTOTAL_MALICIOUS_THRESHOLD", 3),
     vtTimeoutMs: num("VIRUSTOTAL_TIMEOUT_MS", 8000),
+
+    hybridApiKey: str("HYBRID_ANALYSIS_API_KEY"),
+    hybridEndpoint: str("HYBRID_ANALYSIS_ENDPOINT", "https://hybrid-analysis.com/api/v2").replace(/\/+$/, ""),
+    hybridTimeoutMs: num("HYBRID_ANALYSIS_TIMEOUT_MS", 8000),
 
     clamHost: str("CLAMAV_HOST"),
     clamPort: num("CLAMAV_PORT", 3310),

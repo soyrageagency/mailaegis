@@ -30,7 +30,12 @@ const IP = {
   engine: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6v6H9z"/>',
   auth: '<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/>',
 };
-const icon = (n, cls = "ic") => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${IP[n] || ""}</svg>`;
+// Extra glyphs for the forensic sections.
+IP.route = '<circle cx="5.5" cy="6" r="2.2"/><circle cx="18.5" cy="18" r="2.2"/><path d="M7.7 6h6.3a3.5 3.5 0 010 7H10a3.5 3.5 0 000 7h6.3"/>';
+IP.globe = '<circle cx="12" cy="12" r="9"/><path d="M3.2 9.5h17.6M3.2 14.5h17.6"/><path d="M12 3a15 15 0 010 18a15 15 0 010-18z"/>';
+IP.flask = '<path d="M10 3v6.2L4.6 18a2 2 0 001.7 3h11.4a2 2 0 001.7-3L14 9.2V3"/><path d="M8.5 3h7M7.5 15h9"/>';
+
+const icon = (n, cls = "ic") => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${IP[n] || ""}</svg>`;
 
 const S = { status: null, messages: [], selected: null, categories: [], threats: {}, filter: { threat: "", label: "", q: "" } };
 
@@ -310,6 +315,29 @@ function renderRead(a, item) {
           <tr><td>Envelope alignment</td><td>${a.auth.alignmentMismatch ? "<b>mismatch</b>" : "aligned"}</td></tr>
         </tbody></table></div>
 
+      <div class="rsec"><h3>${icon("route")} Delivery path${a.trace.originatingIp ? ` — really from ${esc(a.trace.originatingIp)}` : ""}</h3>
+        ${a.trace.hops.length ? `
+        <div class="origin">
+          ${icon("globe")}
+          <div>
+            <b>${esc(a.trace.originatingIp || "no public origin recorded")}</b>
+            ${a.trace.originatingHost ? `<span class="muted"> · ${esc(a.trace.originatingHost)}</span>` : ""}
+            <div class="muted">${a.trace.hops.length} hop(s) · ${a.trace.transitSec}s in transit${a.trace.ipReputation && !a.trace.ipReputation.unknown ? ` · VirusTotal: <b>${a.trace.ipReputation.malicious}</b> malicious / ${a.trace.ipReputation.harmless} harmless` : ""}</div>
+          </div>
+        </div>
+        <ol class="hops">
+          ${a.trace.hops.map((h) => `
+            <li>
+              <span class="hopn">${h.index}</span>
+              <div>
+                <div><b class="mono">${esc(h.ip || "no IP")}</b>${h.privateIp ? '<span class="tagx">internal</span>' : ""}
+                  ${h.delaySec ? `<span class="muted"> +${h.delaySec}s</span>` : ""}</div>
+                <div class="muted">from <b>${esc(h.from || "?")}</b>${h.rdns && h.rdns !== h.from ? ` <span class="mono">(${esc(h.rdns)})</span>` : ""} → by <b>${esc(h.by || "?")}</b>${h.protocol ? ` <span class="mono">${esc(h.protocol)}</span>` : ""}</div>
+              </div>
+            </li>`).join("")}
+        </ol>` : '<div class="empty2">No Received headers — the delivery path could not be reconstructed.</div>'}
+      </div>
+
       <div class="rsec"><h3>${icon("paperclip")} Attachments (${a.attachments.length})</h3>
         ${rows(a.attachments, { head: ["File", "Type", "Size", "SHA-256"], row: (x) => `<tr><td><b>${esc(x.filename)}</b></td><td class="muted">${esc(x.contentType)}</td><td>${x.size}</td><td class="mono muted">${esc(x.sha256.slice(0, 24))}…</td></tr>` }, "No attachments.")}</div>
 
@@ -321,6 +349,9 @@ function renderRead(a, item) {
 
       <div class="rsec"><h3>${icon("shield")} ClamAV</h3>
         ${rows(a.clamav, { head: ["File", "Result", "Signature"], row: (c) => `<tr><td><b>${esc(c.filename)}</b></td><td>${c.infected ? "<b>INFECTED</b>" : "clean"}</td><td class="mono muted">${esc(c.signature || c.error || "—")}</td></tr>` }, "ClamAV was not consulted.")}</div>
+
+      <div class="rsec"><h3>${icon("flask")} Hybrid Analysis (sandbox)</h3>
+        ${rows(a.hybrid || [], { head: ["File", "Verdict", "Threat score", "AV", "Environment"], row: (h) => `<tr><td><b>${esc(h.submitName || h.sha256.slice(0, 16))}</b></td><td>${h.unknown ? '<span class="muted">never detonated</span>' : `<b>${esc(h.verdict || "—")}</b>`}</td><td class="mono">${h.threatScore || 0}/100</td><td class="mono">${h.avDetect || 0}%</td><td class="muted">${esc(h.environment || h.error || "—")}</td></tr>` }, "Hybrid Analysis was not consulted.")}</div>
 
       <div class="rsec"><h3>${icon("engine")} Engines</h3>
         <table><thead><tr><th>Engine</th><th>Ran</th><th>Notes</th></tr></thead><tbody>

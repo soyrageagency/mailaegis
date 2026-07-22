@@ -8,7 +8,7 @@
 
 **Your inbox, with an antivirus layer.**
 
-Connect your corporate mailbox over IMAP and MailAegis reads it like a real mail client — folders, senders, subjects, categories — while scoring **every** message: SPF/DKIM/DMARC, **VirusTotal** reputation, **ClamAV** content scanning, and its own phishing/BEC heuristic engine.
+Connect your corporate mailbox over IMAP and MailAegis reads it like a real mail client — folders, senders, subjects, categories — while scoring **every** message: SPF/DKIM/DMARC, the **full delivery path** (the IP it *really* came from), **VirusTotal** reputation, **ClamAV** content scanning, **Hybrid Analysis** sandbox verdicts, and its own phishing/BEC heuristic engine.
 
 Use it as a **desktop app**, a **web UI**, an **HTTP API**, or a **Postfix/SMTPS content filter** with proper exit codes.
 
@@ -62,7 +62,8 @@ Corporate mail filters give you a binary answer — delivered or quarantined —
 MailAegis is built for that moment:
 
 - **It explains itself.** Every verdict is a list of findings with a severity, a plain-English reason and the evidence: *"the text says `portal.corp.example` but the link goes to `secure-corp-login.example`"*.
-- **Three opinions, one verdict.** Your own ClamAV, VirusTotal's reputation data, and an in-house heuristic engine that understands *identity* and *intent* — not just signatures.
+- **Four opinions, one verdict.** Your own ClamAV, VirusTotal's reputation data, Hybrid Analysis' sandbox behaviour, and an in-house heuristic engine that understands *identity* and *intent* — not just signatures.
+- **It shows the receipts.** The full `Received:` chain, hop by hop, with the originating IP, its reverse DNS and its reputation — the answer to "where did this actually come from?".
 - **It reads like a mail client.** Folders, Sent, search, threat categories and your own labels. Triage a mailbox the way you actually work, not through a log file.
 - **It drops into a pipeline.** `cat message.eml | mailaegis scan` exits `0/1/2` for clean/suspicious/malicious — that is all Postfix, procmail or a milter needs.
 - **Zero runtime dependencies.** MIME parsing, the IMAP client, the ClamAV protocol and the web server are all hand-written on Node core.
@@ -117,6 +118,9 @@ $ mailaegis demo --demo
 ### Reading pane — the verdict, and exactly why
 <img src="./assets/screenshots/message.png" alt="MailAegis reading pane showing a malicious BEC message with its findings" width="100%">
 
+### The scanners behind the verdict — and which ones actually ran
+<img src="./assets/screenshots/scanners.png" alt="MailAegis showing VirusTotal detections, ClamAV signatures and the list of engines that ran" width="100%">
+
 ### A printable report for the ticket
 <img src="./assets/screenshots/report.png" alt="MailAegis printable HTML analysis report" width="82%">
 
@@ -135,7 +139,8 @@ $ mailaegis demo --demo
 | 📎 **Attachments** | Executables and blocked extensions · **double extensions** (`statement.pdf.exe`) · macro-enabled Office files · **magic-byte/extension mismatch** · executables inside archives · password-protected archives |
 | 🔐 **Authentication** | SPF fail/softfail · DKIM invalid · DMARC fail · envelope/From misalignment · spoofed *internal* senders |
 | 🧠 **Intent** | Bank-detail change requests · urgent wire transfers · gift-card scams · account-expiry pressure · secrecy pressure |
-| 🦠 **Scanners** | **ClamAV** signature hits · **VirusTotal** file & URL detections · files VirusTotal has never seen |
+| 🛰️ **Delivery path** | Reconstructs the full `Received:` chain — **the IP the message really came from**, its reverse DNS, every hop and dwell time · flags rDNS that contradicts the From domain, forged relay identities and single-hop injection · checks the **originating IP's reputation** |
+| 🦠 **Scanners** | **ClamAV** signature hits · **VirusTotal** file, URL & IP detections · **Hybrid Analysis** sandbox detonation verdicts · files no engine has ever seen |
 
 Each finding carries a weight; the total (capped at 100) is the risk score, and your thresholds turn it into **clean · suspicious · malicious**. Findings are also grouped into **threat categories** — Malware, Phishing, Fraud/BEC, Spoofing — so an analyst sees *what kind* of bad it is at a glance.
 
@@ -144,8 +149,9 @@ Each finding carries a weight; the total (capped at 100) is the risk score, and 
 ## 🛠️ How it works
 
 ```
- parse → authenticate → heuristics → ClamAV → VirusTotal → score → verdict
- (MIME)   (SPF/DKIM/DMARC)  (in-house)  (your daemon)  (reputation)
+ parse → authenticate → trace → heuristics → ClamAV → VirusTotal → Hybrid → score
+ (MIME)   (SPF/DKIM/DMARC)  (Received   (in-house)   (your      (file/URL/IP  (sandbox
+                             chain, IP)              daemon)     reputation)   verdict)
 ```
 
 Every report records **which engines actually ran**, so an "all clear" from a degraded pipeline can never be mistaken for a real one.
@@ -229,6 +235,7 @@ All configuration is environment variables (a local `.env` is loaded automatical
 | `VIRUSTOTAL_API_KEY` | — | Enables the VirusTotal hash/URL lookups. |
 | `VIRUSTOTAL_MALICIOUS_THRESHOLD` | `3` | Engines required before a detection counts as malicious. |
 | `CLAMAV_HOST` / `CLAMAV_PORT` | — / `3310` | Your clamd daemon. |
+| `HYBRID_ANALYSIS_API_KEY` | — | Enables Falcon Sandbox hash lookups. A free "restricted" key is enough. |
 | `MAILAEGIS_CORPORATE_DOMAINS` | — | **Set this.** Your domains, for impersonation & look-alike detection. |
 | `MAILAEGIS_BLOCKED_EXTENSIONS` | `exe,scr,js,vbs,…` | Attachment extensions treated as dangerous. |
 | `MAILAEGIS_SUSPICIOUS_SCORE` / `_QUARANTINE_SCORE` | `35` / `70` | Verdict thresholds. |
@@ -243,7 +250,8 @@ Run `mailaegis doctor` to see exactly which engines are live.
 
 ## 🔒 Privacy & safety
 
-- **VirusTotal receives only SHA-256 hashes and URL identifiers** — never file contents, never message bodies.
+- **VirusTotal receives only SHA-256 hashes, URL identifiers and the originating IP** — never file contents, never message bodies.
+- **Hybrid Analysis is only ever *searched by hash*** (`GET /search/hash`) — MailAegis never submits a file for detonation.
 - **ClamAV runs on your own infrastructure**; attachment bytes never leave your network.
 - **IMAP uses `BODY.PEEK`**, so connecting MailAegis never marks mail as read.
 - **Credentials are never written to disk** and never returned by the API; they live in the process only while you are connected.
@@ -265,8 +273,10 @@ mailaegis/
     │   ├── parse.ts            # Dependency-free MIME/RFC-822 parser
     │   ├── auth.ts             # SPF/DKIM/DMARC + alignment
     │   ├── engine.ts           # The in-house heuristic engine
+    │   ├── trace.ts            # Received-chain forensics (origin IP, hops)
     │   ├── clamav.ts           # clamd INSTREAM client
     │   ├── virustotal.ts       # VirusTotal API v3 lookups
+    │   ├── hybrid.ts           # Hybrid Analysis (Falcon Sandbox) v2
     │   ├── analyze.ts          # The pipeline + scoring
     │   ├── report.ts           # Console · HTML · Markdown · JSON
     │   ├── demo.ts             # Built-in corpus (EICAR-based)
@@ -289,11 +299,12 @@ npm run dev        # hot-reload with tsx
 npm run typecheck  # strict type check
 npm run build      # compile to dist/
 npm run demo       # analyse the built-in corpus
-npm run smoke      # 51-check end-to-end suite (what CI runs)
+npm run smoke      # 62-check end-to-end suite (what CI runs)
+npm run fuzz       # robustness probe: malformed messages must never hang or throw
 npm run shots      # regenerate the README screenshots
 ```
 
-The smoke suite covers the MIME parser, every detection rule that matters, the CLI exit codes, the HTTP API, the mailbox/folder/label flows, and the **IMAP client against a real IMAP conversation** (a fake server is spun up in-process).
+The smoke suite covers the MIME parser, every detection rule that matters, the delivery-path forensics, the CLI exit codes, the HTTP API, the mailbox/folder/label flows, and the **IMAP client against a real IMAP conversation** (a fake server is spun up in-process). `npm run fuzz` throws ~30 malformed/hostile messages at the parser and fails if any hangs, throws or backtracks.
 
 ---
 

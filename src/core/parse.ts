@@ -245,6 +245,16 @@ export function parseMessage(raw: Buffer | string): ParsedMessage {
     const charset = param(ctype, "charset") || "utf-8";
     if (/^text\/html/i.test(ctype)) html += decodeBytes(decoded, charset);
     else if (/^text\//i.test(ctype)) text += decodeBytes(decoded, charset);
+    else if (/^multipart\//i.test(ctype)) {
+      // A multipart container reached the leaf list, so `walk` could not split
+      // it (missing or empty boundary). Mail clients still render such bodies,
+      // so a scanner must never silently drop them — otherwise declaring
+      // "Content-Type: multipart/mixed" with no boundary hides every URL and
+      // every phishing phrase from analysis.
+      const raw = decodeBytes(decoded, charset);
+      if (/<[a-z!/]/i.test(raw)) html += raw;
+      else text += raw;
+    }
   }
 
   const from = parseAddress(headers["from"] ?? "");

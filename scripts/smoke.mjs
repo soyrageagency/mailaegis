@@ -33,6 +33,21 @@ ok("extracts URLs with their anchor text", urls.length === 2 && urls.some((u) =>
 ok("magicType detects an executable", magicType(Buffer.from("MZ\x90\x00")) === "exe");
 ok("zipEntries tolerates non-zip input", zipEntries(Buffer.from("not a zip")).names.length === 0);
 
+// Evasion regression: declaring multipart with no boundary must NOT hide the
+// body from analysis (mail clients still render it).
+const evasive = [
+  'From: "Partner Ltd Billing" <billing@partner.example>',
+  "Return-Path: <billing@partner.example>",
+  "To: accounts@corp.example",
+  "Subject: Invoice ready",
+  "Authentication-Results: mx; spf=pass; dkim=pass; dmarc=pass",
+  "Content-Type: multipart/mixed",
+  "",
+  "Please confirm your credentials: https://secure-corp-login.example/verify?u=staff",
+].join("\r\n");
+const evasiveAnalysis = await analyzeRaw(evasive, config);
+ok("malformed multipart (no boundary) is still scanned", evasiveAnalysis.urls.length === 1 && evasiveAnalysis.findings.some((f) => f.rule === "credential-landing"), `urls=${evasiveAnalysis.urls.length}`);
+
 const samples = demoMessages();
 ok("corpus has five samples", samples.length === 5);
 
@@ -62,7 +77,21 @@ ok("malware: VirusTotal flags the payload", mal.virustotal.some((v) => v.malicio
 ok("malware: catches the double extension", mal.findings.some((f) => f.rule === "double-extension"));
 ok("malware: catches the macro document", mal.findings.some((f) => f.rule === "macro-document"));
 ok("malware: hashes attachments (sha256)", mal.attachments.every((a) => /^[0-9a-f]{64}$/.test(a.sha256)));
-ok("engines are reported honestly", mal.engines.length === 4 && mal.engines.every((e) => typeof e.ran === "boolean"));
+ok("engines are reported honestly", mal.engines.length === 6 && mal.engines.every((e) => typeof e.ran === "boolean"), `${mal.engines.length} engines`);
+ok("malware: Hybrid Analysis flags the payload", mal.hybrid.some((h) => h.verdict === "malicious") && mal.findings.some((f) => f.rule === "hybrid-malicious"));
+
+// ---- Delivery-path forensics ------------------------------------------------
+const clean = byId["clean-invoice"];
+ok("trace: reconstructs the delivery path", clean.trace.hops.length === 2 && clean.trace.hops[0].index === 0);
+ok("trace: identifies the originating public IP", clean.trace.originatingIp === "203.0.113.44", clean.trace.originatingIp);
+ok("trace: marks internal hops as private", clean.trace.hops.some((h) => h.privateIp && h.ip === "10.10.20.5"));
+ok("trace: parses hop hosts and protocol", clean.trace.hops[0].by === "mx01.corp.example" && clean.trace.hops[0].from === "smtp-out-3.partner.example");
+ok("trace: computes transit time", clean.trace.transitSec > 0 && clean.trace.transitSec < 120, `${clean.trace.transitSec}s`);
+ok("trace: a clean relay raises no trace findings", !clean.findings.some((f) => f.source === "trace"));
+
+ok("trace: exposes the BEC sender's real origin", bec.trace.originatingIp === "45.146.130.22" && bec.trace.originatingHost.includes("bulletproof"), bec.trace.originatingIp);
+ok("trace: flags reverse-DNS that contradicts the From domain", bec.findings.some((f) => f.rule === "rdns-mismatch"));
+ok("trace: checks the originating IP reputation", bec.trace.ipReputation && bec.trace.ipReputation.malicious > 0 && bec.findings.some((f) => f.rule === "origin-ip-reputation"));
 
 // ---- CLI --------------------------------------------------------------------
 rmSync(OUT, { recursive: true, force: true });

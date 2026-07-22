@@ -57,6 +57,7 @@
     "demo": "node -e \"process.env.MAILAEGIS_DEMO='true';import('./dist/index.js')\" demo",
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
+    "fuzz": "node scripts/fuzz-check.mjs",
     "shots": "node scripts/shots.mjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
   },

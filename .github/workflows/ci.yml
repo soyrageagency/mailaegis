@@ -26,3 +26,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: node scripts/smoke.mjs
+      # A mail parser reads hostile input: prove it never hangs, throws or
+      # backtracks catastrophically on malformed messages.
+      - name: Parser robustness probe
+        run: node scripts/fuzz-check.mjs

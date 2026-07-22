@@ -24,6 +24,8 @@ interface DemoAttachment {
 
 interface EmlOptions {
   headers: Record<string, string>;
+  /** Received headers, newest first — exactly how a real MTA stacks them. */
+  received?: string[];
   text?: string;
   html?: string;
   attachments?: DemoAttachment[];
@@ -35,12 +37,13 @@ function b64(content: Buffer): string {
 }
 
 /** Build a syntactically correct MIME message. */
-function eml({ headers, text = "", html = "", attachments = [] }: EmlOptions): string {
+function eml({ headers, received = [], text = "", html = "", attachments = [] }: EmlOptions): string {
   const lines: string[] = [];
   const outer = "----=_MA_MIXED_9f2b";
   const inner = "----=_MA_ALT_4c1d";
   const multipart = attachments.length > 0;
 
+  for (const r of received) lines.push(`Received: ${r}`);
   for (const [k, v] of Object.entries(headers)) lines.push(`${k}: ${v}`);
   lines.push("MIME-Version: 1.0");
 
@@ -94,6 +97,10 @@ export function demoMessages(): DemoMessage[] {
       label: "Legitimate supplier invoice",
       expectation: "clean",
       raw: eml({
+      received: [
+        "from mx01.corp.example (mx01.corp.example [10.10.20.5]) by store.corp.example with LMTP id A1B2C3; Mon, 19 Jan 2026 09:14:09 +0100",
+        "from smtp-out-3.partner.example (smtp-out-3.partner.example [203.0.113.44]) by mx01.corp.example with ESMTPS id X9Y8Z7; Mon, 19 Jan 2026 09:14:05 +0100",
+      ],
         headers: {
           "Return-Path": "<billing@partner.example>",
           From: '"Partner Ltd Billing" <billing@partner.example>',
@@ -113,6 +120,10 @@ export function demoMessages(): DemoMessage[] {
       label: "Marketing newsletter",
       expectation: "clean",
       raw: eml({
+      received: [
+        "from mx01.corp.example (mx01.corp.example [10.10.20.5]) by store.corp.example with LMTP id N1N2N3; Thu, 05 Feb 2026 08:00:06 +0100",
+        "from bulk-07.vendor.example (bulk-07.vendor.example [198.51.100.77]) by mx01.corp.example with ESMTPS id M4M5M6; Thu, 05 Feb 2026 08:00:03 +0100",
+      ],
         headers: {
           "Return-Path": "<news@vendor.example>",
           From: '"Vendor Insights" <news@vendor.example>',
@@ -131,6 +142,10 @@ export function demoMessages(): DemoMessage[] {
       label: "CEO fraud / bank-detail change (BEC)",
       expectation: "malicious",
       raw: eml({
+      received: [
+        "from mx01.corp.example (mx01.corp.example [10.10.20.5]) by store.corp.example with LMTP id B1B2B3; Tue, 10 Feb 2026 11:42:24 +0100",
+        "from vps-4417.bulletproof.example (vps-4417.bulletproof.example [45.146.130.22]) by mx01.corp.example with ESMTP id K7K8K9; Tue, 10 Feb 2026 11:42:19 +0100",
+      ],
         headers: {
           "Return-Path": "<m.torres.ceo@gmail.com>",
           From: '"Marta Torres | CEO corp.example" <m.torres.ceo@gmail.com>',
@@ -153,6 +168,10 @@ export function demoMessages(): DemoMessage[] {
       label: "Credential phishing from a look-alike domain",
       expectation: "malicious",
       raw: eml({
+      received: [
+        "from mx01.corp.example (mx01.corp.example [10.10.20.5]) by store.corp.example with LMTP id P1P2P3; Wed, 11 Feb 2026 07:05:51 +0100",
+        "from mail.c0rp-example.com (unknown [45.9.148.201]) by mx01.corp.example with ESMTP id Q4Q5Q6; Wed, 11 Feb 2026 07:05:47 +0100",
+      ],
         headers: {
           "Return-Path": "<it-support@c0rp-example.com>",
           From: '"corp.example IT Support" <it-support@c0rp-example.com>',
@@ -174,6 +193,10 @@ export function demoMessages(): DemoMessage[] {
       label: "Macro-enabled attachment carrying malware",
       expectation: "malicious",
       raw: eml({
+      received: [
+        "from mx01.corp.example (mx01.corp.example [10.10.20.5]) by store.corp.example with LMTP id D1D2D3; Fri, 13 Feb 2026 16:21:18 +0100",
+        "from relay.billing-notice.example (relay.billing-notice.example [185.220.101.9]) by mx01.corp.example with ESMTP id R7R8R9; Fri, 13 Feb 2026 16:21:13 +0100",
+      ],
         headers: {
           "Return-Path": "<accounts@billing-notice.example>",
           From: '"Accounts Payable" <accounts@billing-notice.example>',

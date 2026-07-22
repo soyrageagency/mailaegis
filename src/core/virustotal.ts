@@ -49,7 +49,7 @@ async function vtGet(path: string, config: AppConfig): Promise<{ status: number;
 
 interface VtStats { malicious?: number; suspicious?: number; harmless?: number; undetected?: number }
 
-function fromAttributes(target: string, kind: "file" | "url", attributes: Record<string, unknown>): VtResult {
+function fromAttributes(target: string, kind: VtResult["kind"], attributes: Record<string, unknown>): VtResult {
   const stats = (attributes.last_analysis_stats ?? {}) as VtStats;
   const results = (attributes.last_analysis_results ?? {}) as Record<string, { category?: string; result?: string }>;
   const detections = Object.entries(results)
@@ -69,7 +69,7 @@ function fromAttributes(target: string, kind: "file" | "url", attributes: Record
   };
 }
 
-const unknownResult = (target: string, kind: "file" | "url"): VtResult => ({
+const unknownResult = (target: string, kind: VtResult["kind"]): VtResult => ({
   target, kind, unknown: true, malicious: 0, suspicious: 0, harmless: 0, undetected: 0, detections: [],
 });
 
@@ -118,6 +118,29 @@ export async function lookupFile(attachment: Attachment, config: AppConfig): Pro
     return fromAttributes(attachment.sha256, "file", attributes);
   } catch (err) {
     return { ...unknownResult(attachment.sha256, "file"), error: (err as Error).message };
+  }
+}
+
+/** Look up the reputation of the IP a message was delivered from. */
+export async function lookupIp(ip: string, config: AppConfig): Promise<VtResult> {
+  if (config.demo) {
+    // Fabricate a believable reputation: the demo phishing origins are dirty.
+    const dirty = /^(45\.|185\.|194\.)/.test(ip);
+    return {
+      target: ip, kind: "ip", unknown: false,
+      malicious: dirty ? 9 : 0, suspicious: dirty ? 2 : 0, harmless: dirty ? 60 : 71, undetected: 18,
+      detections: dirty ? ["Fortinet: Malicious", "Spamhaus: Spam source"] : [],
+      link: `https://www.virustotal.com/gui/ip-address/${ip}`,
+    };
+  }
+  try {
+    const { status, body } = await vtGet(`/ip_addresses/${encodeURIComponent(ip)}`, config);
+    if (status === 404) return { ...unknownResult(ip, "ip"), link: `https://www.virustotal.com/gui/ip-address/${ip}` };
+    if (status !== 200) return { ...unknownResult(ip, "ip"), error: `VirusTotal returned ${status}` };
+    const attributes = ((body as { data?: { attributes?: Record<string, unknown> } }).data?.attributes ?? {});
+    return { ...fromAttributes(ip, "ip", attributes), link: `https://www.virustotal.com/gui/ip-address/${ip}` };
+  } catch (err) {
+    return { ...unknownResult(ip, "ip"), error: (err as Error).message };
   }
 }
 
