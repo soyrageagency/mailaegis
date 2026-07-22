@@ -45,6 +45,10 @@
         <div class="connectgrid">
           <form id="form" class="cform panel">
             <h2>Connect a mailbox</h2>
+            <div class="row">
+              <label>Platform</label>
+              <div id="providers" class="pchips"></div>
+            </div>
             <div class="row"><label>IMAP server</label><input name="host" placeholder="imap.corp.example" autocomplete="off" /></div>
             <div class="row two">
               <div><label>Port</label><input name="port" value="993" inputmode="numeric" /></div>
@@ -56,6 +60,7 @@
               <div><label>Folder</label><input name="mailbox" value="INBOX" /></div>
               <div><label>Fetch</label><input name="limit" value="25" inputmode="numeric" /></div>
             </div>
+            <div id="providerNote" class="pnote hidden"></div>
             <button type="submit" class="cta full"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg> Connect &amp; scan</button>
             <p class="fine muted">Messages are fetched with <code>BODY.PEEK</code> — nothing is marked as read. Credentials stay in this process and are never written to disk.</p>
           </form>

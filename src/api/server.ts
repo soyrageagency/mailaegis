@@ -30,6 +30,7 @@ import { demoMessages } from "../core/demo.js";
 import { readChannel } from "../core/updates.js";
 import { MailboxSession } from "../mailbox/session.js";
 import { CategoryStore, THREAT_META } from "../mailbox/categories.js";
+import { PROVIDERS } from "../mailbox/providers.js";
 
 const PUBLIC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "public");
 const MIME: Record<string, string> = {
@@ -94,6 +95,11 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
       // can switch the whole thing off in one place.
       if (path === "/api/updates" && req.method === "GET") {
         return json(res, 200, await readChannel(config, url.searchParams.get("force") === "1"));
+      }
+
+      // Quick-connect presets, so nobody has to look up an IMAP hostname.
+      if (path === "/api/providers" && req.method === "GET") {
+        return json(res, 200, { providers: PROVIDERS });
       }
 
       if (path === "/api/samples" && req.method === "GET") {

@@ -37,7 +37,7 @@ IP.flask = '<path d="M10 3v6.2L4.6 18a2 2 0 001.7 3h11.4a2 2 0 001.7-3L14 9.2V3"
 
 const icon = (n, cls = "ic") => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${IP[n] || ""}</svg>`;
 
-const S = { status: null, messages: [], selected: null, categories: [], threats: {}, filter: { threat: "", label: "", q: "" } };
+const S = { status: null, messages: [], selected: null, categories: [], threats: {}, providers: [], provider: "", filter: { threat: "", label: "", q: "" } };
 
 // ------------------------------------------------------------------ helpers
 function when(dateStr) {
@@ -101,6 +101,7 @@ async function init() {
   });
   $("#addAcct").addEventListener("click", () => { $("#form").reset(); showConnect(); });
   $("#backToClient").addEventListener("click", showClient);
+  await loadProviders();
   $("#q").addEventListener("input", () => { S.filter.q = $("#q").value.toLowerCase(); renderList(); });
   $("#newLabel").addEventListener("click", createLabel);
 }
@@ -108,6 +109,58 @@ async function init() {
 function busy(on, msg) {
   $("#loading").classList.toggle("hidden", !on);
   if (msg) $("#loading").textContent = msg;
+}
+
+// ------------------------------------------------------- provider presets
+/** Fill `{domain}` from whatever address the user has typed so far. */
+function resolveHost(template, address) {
+  const domain = String(address).includes("@") ? String(address).split("@").pop() : "";
+  return template.replace("{domain}", domain || "yourdomain.com");
+}
+
+function applyProvider(p) {
+  S.provider = p.id;
+  const f = $("#form");
+  f.host.value = resolveHost(p.host, f.user.value.trim());
+  f.port.value = p.port;
+  f.tls.value = String(p.tls);
+  const note = $("#providerNote");
+  note.innerHTML = `<b>${esc(p.name)}</b> — ${esc(p.note)} <a href="${esc(p.docs)}" target="_blank" rel="noreferrer">Vendor guide &rarr;</a>`;
+  note.classList.remove("hidden");
+  // An app password is a different secret from the login password, and saying
+  // so in the field itself saves the most common failed connection.
+  f.password.placeholder = p.auth === "app-password-required" ? "app password — not your login password" : "••••••••";
+  renderProviders();
+}
+
+function renderProviders() {
+  $("#providers").innerHTML = S.providers.map((p) => `
+    <button type="button" class="pchip ${S.provider === p.id ? "active" : ""}" data-provider="${esc(p.id)}" title="${esc(p.blurb)}">${esc(p.name)}</button>`).join("");
+}
+
+async function loadProviders() {
+  try {
+    const r = await api("/api/providers");
+    S.providers = r.providers || [];
+  } catch { return; }
+  renderProviders();
+  $("#providers").onclick = (e) => {
+    const b = e.target.closest("[data-provider]"); if (!b) return;
+    applyProvider(S.providers.find((p) => p.id === b.dataset.provider));
+  };
+  // Typing the address is usually enough to know the platform.
+  $("#form").user.addEventListener("blur", () => {
+    const address = $("#form").user.value.trim().toLowerCase();
+    const domain = address.split("@").pop();
+    if (!domain) return;
+    const hit = S.providers.find((p) => (p.domains || []).some((d) => domain === d || domain.endsWith("." + d)));
+    if (hit && S.provider !== hit.id) applyProvider(hit);
+    // A self-hosted preset templates its host on the domain, so refresh it.
+    else if (S.provider) {
+      const p = S.providers.find((x) => x.id === S.provider);
+      if (p && p.selfHosted) $("#form").host.value = resolveHost(p.host, address);
+    }
+  });
 }
 
 // ---------------------------------------------------------------- connect

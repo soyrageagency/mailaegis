@@ -174,6 +174,15 @@ if (up) {
   const disconnected = await post("/api/mailbox/disconnect");
   ok("disconnect clears every mailbox", disconnected.connected === false && disconnected.accounts.length === 0);
 
+  // ---- Provider presets ----------------------------------------------------
+  const { providers } = await (await fetch(`${B}/api/providers`)).json();
+  ok("presets cover the big corporate platforms", ["microsoft365", "google-workspace", "mailcow"].every((id) => providers.some((p) => p.id === id)));
+  ok("every preset carries an implicit-TLS IMAP port", providers.every((p) => p.port > 0 && typeof p.tls === "boolean" && p.note && p.docs.startsWith("https://")));
+  const { detectProvider, resolveHost } = await import("../dist/mailbox/providers.js");
+  ok("presets are detected from the address", detectProvider("ana@gmail.com").id === "google-workspace" && detectProvider("j@corp.onmicrosoft.com").id === "microsoft365");
+  ok("an unknown corporate domain is not guessed at", detectProvider("ana@corp.example") === null);
+  ok("self-hosted presets template the host from the domain", resolveHost("mail.{domain}", "ana@corp.example") === "mail.corp.example");
+
   // ---- The update & announcement channel -----------------------------------
   const channel = await (await fetch(`${B}/api/updates`)).json();
   ok("the channel reports the running version", typeof channel.current === "string" && channel.current.length > 0, JSON.stringify(channel).slice(0, 140));
