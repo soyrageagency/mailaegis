@@ -62,7 +62,8 @@
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "assets": "node scripts/brand-assets.mjs",
     "dev:watch": "tsx watch src/index.ts serve --demo",
-    "menu:demo": "node dist/index.js menu --demo"
+    "menu:demo": "node dist/index.js menu --demo",
+    "postfix": "node scripts/postfix-check.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

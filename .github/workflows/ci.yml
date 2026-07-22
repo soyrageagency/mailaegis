@@ -30,6 +30,11 @@ jobs:
       # backtracks catastrophically on malformed messages.
       - name: Parser robustness probe
         run: node scripts/fuzz-check.mjs
+      # The Postfix filter is a shell script nobody would otherwise run: drive
+      # it with every verdict, a forged header, a broken scanner and a missing
+      # one, against a stand-in sendmail.
+      - name: Postfix content filter
+        run: node scripts/postfix-check.mjs
 
   docker:
     name: Container image

@@ -498,18 +498,50 @@ mailaegis scan message.eml --json         # full analysis as JSON
 mailaegis scan message.eml --report       # also write HTML + JSON + Markdown
 ```
 
-A minimal Postfix `content_filter` wrapper:
+#### A real Postfix content filter
+
+[`integration/postfix-filter.sh`](integration/postfix-filter.sh) is a complete,
+tested one. Install it and point Postfix at it:
 
 ```bash
-#!/bin/sh
-# /usr/local/bin/mailaegis-filter — invoked by Postfix with the message on stdin
-tee /tmp/in.$$ | mailaegis scan >/dev/null 2>&1
-case $? in
-  2) exit 69 ;;                                   # malicious → bounce (EX_UNAVAILABLE)
-  1) exec sendmail -i -X quarantine "$@" </tmp/in.$$ ;;   # suspicious → quarantine
-  *) exec sendmail -i "$@" </tmp/in.$$ ;;         # clean → deliver
-esac
+sudo install -m 755 integration/postfix-filter.sh /usr/local/bin/mailaegis-filter
+sudo useradd -r -s /usr/sbin/nologin filter 2>/dev/null || true
 ```
+
+`/etc/postfix/master.cf` — add the transport, and hand inbound mail to it:
+
+```
+smtp      inet  n  -  y  -  -  smtpd
+    -o content_filter=mailaegis:dummy
+
+mailaegis unix  -  n  n  -  10 pipe
+    flags=Rq user=filter null_sender=
+    argv=/usr/local/bin/mailaegis-filter -f ${sender} -- ${recipient}
+```
+
+Then `sudo postfix reload`. Messages arrive stamped:
+
+```
+X-MailAegis-Verdict: suspicious
+X-MailAegis-Score: 48
+X-MailAegis-Ref: MA-20260722-a1b2c3
+```
+
+What the filter does, and why:
+
+| Verdict | Action | Reason |
+| --- | --- | --- |
+| clean · suspicious | delivered, **stamped** | A filter that silently swallows borderline mail trains people to distrust it. The header lets your own rules, the user and any later investigation all act on it. |
+| malicious | exit `69` → Postfix bounces | |
+| **the scanner fails** | exit `75` → Postfix **requeues** | This is the one that matters. Delivering unscanned mail because the scanner fell over is the worst outcome available, and exiting 0 on error is exactly how it happens. |
+
+It writes the message copy to a `mktemp -d` directory at mode 600 and removes it
+on every exit path including a signal, and it strips any inbound
+`X-MailAegis-*` header so a sender cannot forge a verdict.
+
+`node scripts/postfix-check.mjs` drives it end to end — every verdict, a forged
+header, a broken scanner and a missing one — against a stand-in `sendmail`. CI
+runs it on every push.
 
 ### 2. HTTP API
 
