@@ -4,19 +4,30 @@
 
 <br/><br/>
 
-# 🛡️ MailAegis — Corporate Email Threat Analyzer
+# 🛡️ MailAegis — Open-Source Email Security & Phishing Analyzer
 
-**Your inbox, with an antivirus layer.**
+### The self-hosted mail client with an antivirus layer built in.
 
-Connect your corporate mailbox over IMAP and MailAegis reads it like a real mail client — folders, senders, subjects, categories — while scoring **every** message: SPF/DKIM/DMARC, the **full delivery path** (the IP it *really* came from), **VirusTotal** reputation, **ClamAV** content scanning, **Hybrid Analysis** sandbox verdicts, and its own phishing/BEC heuristic engine.
+**Free. Open source. No account, no telemetry, no subscription.**
 
-Use it as a **desktop app**, a **web UI**, an **HTTP API**, or a **Postfix/SMTPS content filter** with proper exit codes.
+MailAegis connects to any corporate mailbox over **IMAP** — Microsoft 365, Google
+Workspace, Mailcow, Zimbra, Proton — and reads it like a real mail client, while
+scoring **every single message** for phishing, malware and **business email
+compromise (BEC)**.
+
+Six engines behind one verdict: **SPF/DKIM/DMARC** authentication, the **full
+delivery path** (the IP it *really* came from), **VirusTotal** reputation,
+**ClamAV** content scanning, **Hybrid Analysis** sandbox detonation, and an
+in-house heuristic engine that understands *identity* and *intent*.
+
+Run it as a **desktop app** (macOS · Windows), a **web app** on your own domain,
+an **HTTP API**, or a **Postfix / SMTPS content filter** with proper exit codes.
 
 <br/>
 
-<img src="./assets/screenshots/inbox.png" alt="MailAegis three-pane mail client: folders, threat categories, labels, and a message list with a verdict on every row" width="100%">
+<img src="./assets/screenshots/inbox.png" alt="MailAegis open-source email security client: three-pane mail client showing folders, threat categories, labels and a phishing risk verdict on every message" width="100%">
 
-<sub>📬 A professional three-pane client — folders, **threat categories**, custom labels — with a colour-coded verdict on every message. <a href="#-see-it">More screenshots ↓</a></sub>
+<sub>📬 Several mailboxes at once · **threat categories** · your own labels · a colour-coded verdict on every row. <a href="#-see-it">More screenshots ↓</a></sub>
 
 <br/><br/>
 
@@ -41,6 +52,7 @@ Use it as a **desktop app**, a **web UI**, an **HTTP API**, or a **Postfix/SMTPS
 - [Why MailAegis](#-why-mailaegis)
 - [Quick start](#-quick-start)
 - [See it](#-see-it)
+- [On a phone, too](#-on-a-phone-too)
 - [What it detects](#-what-it-detects)
 - [The mail client](#-the-mail-client)
 - [How it works](#-how-it-works)
@@ -50,6 +62,7 @@ Use it as a **desktop app**, a **web UI**, an **HTTP API**, or a **Postfix/SMTPS
 - [Privacy & safety](#-privacy--safety)
 - [Project structure](#-project-structure)
 - [Development](#-development)
+- [FAQ](#-faq)
 - [More from the SoyRage suite](#-more-from-the-soyrage-suite)
 - [Support the project](#-support-the-project)
 - [Credits & License](#-credits--license)
@@ -58,16 +71,44 @@ Use it as a **desktop app**, a **web UI**, an **HTTP API**, or a **Postfix/SMTPS
 
 ## 💡 Why MailAegis
 
-Corporate mail filters give you a binary answer — delivered or quarantined — and almost no explanation. When a finance clerk asks *"is this invoice real?"*, nobody can tell them **why** in under a minute.
+**Business email compromise is the most expensive cybercrime there is** — more
+than ransomware, year after year — and it arrives as plain text with no
+attachment, no link, and nothing for a signature engine to match on.
 
-MailAegis is built for that moment:
+Corporate mail filters answer that with one bit: delivered, or quarantined. So
+when a finance clerk asks *"is this invoice real?"*, nobody can tell them **why**
+in under a minute. That minute is the whole attack.
 
-- **It explains itself.** Every verdict is a list of findings with a severity, a plain-English reason and the evidence: *"the text says `portal.corp.example` but the link goes to `secure-corp-login.example`"*.
-- **Four opinions, one verdict.** Your own ClamAV, VirusTotal's reputation data, Hybrid Analysis' sandbox behaviour, and an in-house heuristic engine that understands *identity* and *intent* — not just signatures.
-- **It shows the receipts.** The full `Received:` chain, hop by hop, with the originating IP, its reverse DNS and its reputation — the answer to "where did this actually come from?".
-- **It reads like a mail client.** Folders, Sent, search, threat categories and your own labels. Triage a mailbox the way you actually work, not through a log file.
-- **It drops into a pipeline.** `cat message.eml | mailaegis scan` exits `0/1/2` for clean/suspicious/malicious — that is all Postfix, procmail or a milter needs.
-- **Zero runtime dependencies.** MIME parsing, the IMAP client, the ClamAV protocol and the web server are all hand-written on Node core.
+MailAegis is built for that minute.
+
+| | |
+| --- | --- |
+| 🧾 **It explains itself** | Every verdict is a list of findings with a severity, a plain-English reason and the evidence: *"the text says `portal.corp.example` but the link goes to `secure-corp-login.example`"*. |
+| 🧠 **It understands intent, not just signatures** | Bank-detail changes, urgency, secrecy pressure, executive impersonation from a free mailbox — the BEC playbook, scored. |
+| 🧭 **It shows the receipts** | The full `Received:` chain hop by hop, with the originating IP, its reverse DNS and its reputation. The answer to *"where did this actually come from?"* |
+| 🔬 **Six opinions, one verdict** | Your own ClamAV, VirusTotal reputation, Hybrid Analysis sandbox behaviour, SPF/DKIM/DMARC, delivery-path forensics and the heuristic engine — and it tells you **which ones actually ran**. |
+| 📬 **It reads like a mail client** | Several mailboxes, folders, Sent, search operators, threat categories, labels, keyboard shortcuts. Triage the way you actually work, not through a log file. |
+| ✉️ **It scans what you send, too** | A compromised account mailing malware to your customers is the more expensive incident. Outbound is scanned before submission. |
+| 🔗 **It drops into a pipeline** | `cat message.eml \| mailaegis scan` exits `0/1/2` for clean/suspicious/malicious — all Postfix, procmail or a milter needs. |
+| 📦 **Zero runtime dependencies** | The MIME parser, IMAP client, SMTP client, ClamAV protocol and web server are hand-written on Node core. Nothing to audit but this repository. |
+
+### Who it's for
+
+- **IT teams without a SOC** who need to answer "is this real?" quickly and defensibly.
+- **MSPs** triaging suspicious mail across many client mailboxes.
+- **Security analysts** who want the delivery path, the IOCs and the `.eml`, not a dashboard.
+- **Anyone self-hosting mail** — Mailcow, Zimbra, Postfix, Proton — who wants a scanner they control.
+
+### How it compares
+
+| | MailAegis | Secure email gateway | Thunderbird / Outlook |
+| --- | :---: | :---: | :---: |
+| Explains **why** a message is bad | ✅ finding-by-finding | ⚠️ a score, sometimes | ❌ |
+| BEC / intent detection | ✅ | ✅ | ❌ |
+| Delivery-path forensics | ✅ | ⚠️ raw headers | ⚠️ raw headers |
+| A mail client you can work in | ✅ | ❌ | ✅ |
+| Self-hosted, no data leaves | ✅ | ❌ | ✅ |
+| Cost | **free & open source** | per seat, per month | free |
 
 ---
 
@@ -113,19 +154,61 @@ $ mailaegis demo --demo
 
 <div align="center">
 
-### Connect a mailbox — or open the simulated one
-<img src="./assets/screenshots/connect.png" alt="MailAegis connection screen with IMAP settings and a demo mailbox option" width="92%">
+### One click to connect — Microsoft 365, Google Workspace, Mailcow and more
+<img src="./assets/screenshots/connect.png" alt="MailAegis IMAP connection screen with one-click presets for Microsoft 365, Google Workspace, Mailcow, Zoho, Zimbra and Proton Bridge" width="94%">
 
-### Reading pane — the verdict, and exactly why
-<img src="./assets/screenshots/message.png" alt="MailAegis reading pane showing a malicious BEC message with its findings" width="100%">
+<sub>Presets fill in the hostname <b>and</b> warn you that Google and Microsoft reject your normal password over IMAP — the single most common failed connection.</sub>
 
-### The scanners behind the verdict — and which ones actually ran
-<img src="./assets/screenshots/scanners.png" alt="MailAegis showing VirusTotal detections, ClamAV signatures and the list of engines that ran" width="100%">
+### Why it's bad, finding by finding
+<img src="./assets/screenshots/message.png" alt="MailAegis reading pane showing a malicious business email compromise message with severity-ranked findings and a 100/100 risk score" width="100%">
+
+### The delivery path, the scanners, and which engines actually ran
+<img src="./assets/screenshots/scanners.png" alt="MailAegis showing the Received header chain, originating IP reputation, VirusTotal detections, ClamAV signatures and Hybrid Analysis sandbox results" width="100%">
+
+### Several mailboxes, one inbox
+<img src="./assets/screenshots/mailboxes.png" alt="MailAegis mailbox picker showing security@, finance@ and a unified All mailboxes view, each with its own risk count" width="100%">
+
+<sub>A company has <code>security@</code>, <code>finance@</code> and <code>info@</code>. Each keeps its own folders and counts — and you can see at a glance <b>which one is being attacked</b>.</sub>
+
+### Search the way an analyst thinks
+<img src="./assets/screenshots/search.png" alt="MailAegis search using operators: is:malicious has:attachment, filtering the message list" width="100%">
+
+<sub><code>from:acme</code> · <code>has:attachment</code> · <code>is:malicious</code> · <code>is:unread</code> · <code>label:soc</code> · <code>score&gt;50</code> — and anything else is plain text.</sub>
+
+### Reply safely — outbound is scanned too
+<img src="./assets/screenshots/compose.png" alt="MailAegis compose window warning that the message being replied to is malicious and its Reply-To points to a different domain" width="100%">
+
+<sub>Answering a flagged message shows the verdict first — and if its <code>Reply-To</code> points somewhere other than its <code>From</code>, you see <b>both addresses</b>. That redirect is exactly how BEC succeeds.</sub>
+
+### Dark mode
+<img src="./assets/screenshots/dark.png" alt="MailAegis in dark mode showing the message list and threat analysis" width="100%">
 
 ### A printable report for the ticket
-<img src="./assets/screenshots/report.png" alt="MailAegis printable HTML analysis report" width="82%">
+<img src="./assets/screenshots/report.png" alt="MailAegis printable HTML email threat analysis report with findings, IOCs and delivery path" width="84%">
 
-<sub>Rendered in <b>demo mode</b> · watermarked © SoyRage Agency · soyrage.es</sub>
+<br/>
+
+## 📱 On a phone, too
+
+The web UI is fully responsive — host it on your own domain and your team triages
+from anywhere, no app store involved.
+
+<table>
+<tr>
+<td width="25%"><img src="./assets/screenshots/phone-inbox.png" alt="MailAegis mobile inbox with risk verdicts" width="100%"></td>
+<td width="25%"><img src="./assets/screenshots/phone-message.png" alt="MailAegis mobile threat analysis view" width="100%"></td>
+<td width="25%"><img src="./assets/screenshots/phone-folders.png" alt="MailAegis mobile folder and threat category drawer" width="100%"></td>
+<td width="25%"><img src="./assets/screenshots/phone-compose.png" alt="MailAegis mobile compose window" width="100%"></td>
+</tr>
+<tr>
+<td align="center"><sub>Inbox</sub></td>
+<td align="center"><sub>Analysis</sub></td>
+<td align="center"><sub>Folders</sub></td>
+<td align="center"><sub>Compose</sub></td>
+</tr>
+</table>
+
+<sub>Every screenshot above is <b>demo mode</b>, unretouched — it is exactly what <code>npx mailaegis serve --demo</code> gives you. © SoyRage Agency · soyrage.es</sub>
 
 </div>
 
@@ -355,6 +438,69 @@ npm run shots      # regenerate the README screenshots
 ```
 
 The smoke suite covers the MIME parser, every detection rule that matters, the delivery-path forensics, the CLI exit codes, the HTTP API, the mailbox/folder/label flows, and the **IMAP client against a real IMAP conversation** (a fake server is spun up in-process). `npm run fuzz` throws ~30 malformed/hostile messages at the parser and fails if any hangs, throws or backtracks.
+
+---
+
+## ❓ FAQ
+
+<details>
+<summary><b>Does MailAegis send my email anywhere?</b></summary>
+
+No. Message bodies and attachment contents never leave your machine. VirusTotal
+and Hybrid Analysis receive **only SHA-256 hashes**, URL identifiers and the
+originating IP — never the file, never the text. ClamAV runs on your own daemon.
+With no API keys configured, MailAegis makes no outbound request at all.
+</details>
+
+<details>
+<summary><b>Will it mark my messages as read?</b></summary>
+
+No. Everything is fetched with IMAP `BODY.PEEK`, which does not set the `\Seen`
+flag. Connecting MailAegis never changes what your users see in Outlook — which
+is also why read/pinned state is kept in the browser rather than written back.
+</details>
+
+<details>
+<summary><b>Can it connect to Microsoft 365 / Gmail?</b></summary>
+
+Yes, over IMAP. Both reject your normal password, so you need an **app
+password**: Microsoft requires MFA on the account (or an admin to re-enable IMAP
+for the mailbox), Google requires 2-Step Verification. Selecting either preset
+in the UI links the vendor's own instructions.
+</details>
+
+<details>
+<summary><b>Is this an anti-spam filter?</b></summary>
+
+No — and deliberately. Spam filtering is a solved, high-volume problem your MX
+already does. MailAegis is for the messages that **get through**: the invoice
+that looks real, the CEO who is not the CEO. Use it alongside your gateway, not
+instead of it.
+</details>
+
+<details>
+<summary><b>Do I need VirusTotal or ClamAV keys to try it?</b></summary>
+
+No. `npx mailaegis serve --demo` runs the whole thing with a realistic corpus
+and simulated scanner verdicts. Every screenshot in this README is that demo.
+</details>
+
+<details>
+<summary><b>Can I self-host it for my team?</b></summary>
+
+Yes. `mailaegis serve` is a plain Node HTTP server with no database — put it
+behind your reverse proxy, set `MAILAEGIS_API_TOKEN`, and the responsive UI works
+on desktop and phone. Set `MAILAEGIS_UPDATE_CHECK=false` for air-gapped installs
+and it makes no outbound request whatsoever.
+</details>
+
+<details>
+<summary><b>What licence is it?</b></summary>
+
+The **SoyRage Attribution License** — use it, fork it, deploy it commercially;
+just keep the credit to [SoyRage Agency](https://soyrage.es/) intact. See
+[LICENSE](./LICENSE).
+</details>
 
 ---
 

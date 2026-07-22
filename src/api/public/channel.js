@@ -176,6 +176,63 @@
     queue.slice(0, 3).forEach(function (card, i) { setTimeout(function () { show(card); }, 900 + i * 320); });
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", check);
-  else check();
+  /*
+   * The thank-you card.
+   *
+   * Shown once, and not on the first run: asking for a star before someone has
+   * decided whether the thing is any good is how you get ignored. It waits
+   * until the third session, so by then MailAegis has either earned it or it
+   * has not. "Not now" means a month, not five minutes.
+   */
+  var VISITS = "mailaegis.visits";
+  var THANKS = "mailaegis.thanks";
+  var MONTH = 30 * DAY;
+
+  function maybeThank() {
+    var visits = 0;
+    try { visits = Number(localStorage.getItem(VISITS) || 0) + 1; localStorage.setItem(VISITS, String(visits)); } catch (e) { return; }
+    if (visits < 3) return;
+    if (read(SEEN)[THANKS]) return;
+    var until = read(SNOOZE)[THANKS];
+    if (typeof until === "number" && Date.now() < until) return;
+
+    var el = document.createElement("aside");
+    el.className = "chancard thanks";
+    el.innerHTML =
+      '<div class="thankmark">' +
+        '<svg viewBox="0 0 120 120" fill="currentColor" aria-hidden="true">' +
+          '<path fill-rule="evenodd" clip-rule="evenodd" d="M20 12 H68 L92 32 V54 L72 69 L101 108 H73 L51 74 H42 V108 H20 Z M42 32 V56 H64 L74 48 V40 L64 32 Z"/>' +
+          '<path d="M78 6 H106 L86 28 Z"/>' +
+        "</svg>" +
+      "</div>" +
+      '<div class="chantitle">Thank you for using MailAegis</div>' +
+      '<p class="chanbody">It is free, open source, and it stays that way — no account, no telemetry, no subscription. ' +
+        "If it has caught something for you, a star is how other teams find it.</p>" +
+      '<div class="chanfoot">' +
+        '<a class="chanbtn star" href="https://github.com/soyrageagency/mailaegis" target="_blank" rel="noreferrer">' +
+          '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3.4l2.6 5.4 5.9.8-4.3 4.1 1.1 5.9-5.3-2.9-5.3 2.9 1.1-5.9L3.5 9.6l5.9-.8z"/></svg>' +
+          "Star on GitHub</a>" +
+        '<a class="chanheart" href="https://www.paypal.com/paypalme/soyrageagency" target="_blank" rel="noreferrer">Support</a>' +
+        '<button class="chanlater">Not now</button>' +
+      "</div>";
+
+    var forget = function () { var s = read(SEEN); s[THANKS] = true; write(SEEN, s); close(el); };
+    var later = function () { var s = read(SNOOZE); s[THANKS] = Date.now() + MONTH; write(SNOOZE, s); close(el); };
+    el.querySelector(".chanlater").addEventListener("click", later);
+    el.querySelector(".star").addEventListener("click", forget);
+    el.querySelector(".chanheart").addEventListener("click", forget);
+
+    if (!host) { host = document.createElement("div"); host.className = "chan"; document.body.appendChild(host); }
+    host.appendChild(el);
+    requestAnimationFrame(function () { el.classList.add("in"); });
+  }
+
+  function boot() {
+    check();
+    // Behind the release card, so two never fly in together.
+    setTimeout(maybeThank, 2600);
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
 })();

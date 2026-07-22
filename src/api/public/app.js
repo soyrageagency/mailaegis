@@ -264,6 +264,20 @@ const ask = (title, body, opts = {}) => dialog({ title, body, confirmLabel: "Con
 const askText = (title, value = "", opts = {}) => dialog({ title, input: value, confirmLabel: "Save", ...opts });
 const notify = (title, body) => dialog({ title, body, confirmLabel: "Got it", cancelLabel: "" }).then(() => undefined);
 
+/** Animate a number from zero to its value, easing out at the end. */
+function countUp(el, ms = 520) {
+  if (!el) return;
+  const target = Number(el.dataset.score || 0);
+  if (!target || matchMedia("(prefers-reduced-motion: reduce)").matches) { el.textContent = target; return; }
+  const started = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - started) / ms);
+    el.textContent = Math.round(target * (1 - Math.pow(1 - t, 3)));
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 function toast(text, kind = "") {
   const el = document.createElement("div");
   el.className = `toast ${kind}`;
@@ -331,6 +345,7 @@ async function init() {
   await loadProviders();
   wireComposer();
   wireShortcuts();
+  wireResponsive();
   renderSaved();
   applyTheme();
   applySound();
@@ -380,8 +395,8 @@ function applyProvider(p) {
 }
 
 function renderProviders() {
-  $("#providers").innerHTML = S.providers.map((p) => `
-    <button type="button" class="pchip ${S.provider === p.id ? "active" : ""}" data-provider="${esc(p.id)}" title="${esc(p.blurb)}">${esc(p.name)}</button>`).join("");
+  $("#providers").innerHTML = S.providers.map((p, i) => `
+    <button type="button" class="pchip ${S.provider === p.id ? "active" : ""}" style="--p:${i}" data-provider="${esc(p.id)}" title="${esc(p.blurb)}">${esc(p.name)}</button>`).join("");
 }
 
 async function loadProviders() {
@@ -439,7 +454,44 @@ function showClient() {
   $("#client").classList.remove("hidden");
   $("#disconnect").classList.remove("hidden");
   $("#analyseFile").classList.remove("hidden");
+  $("#menu").classList.remove("hidden");
+  $("#composeFab").classList.remove("hidden");
   renderRail(); renderList();
+}
+
+/*
+ * On a phone there is room for one pane, so the three-pane layout becomes a
+ * sequence: folders slide over as a drawer, the list fills the screen, and
+ * opening a message swaps the list for the reader with a back button. The
+ * CSS already describes all three states; this is the part that switches
+ * between them.
+ */
+const isPhone = () => matchMedia("(max-width: 760px)").matches;
+
+function wireResponsive() {
+  $("#menu").addEventListener("click", (e) => {
+    e.stopPropagation();
+    document.body.classList.toggle("rail-open");
+  });
+  // Tapping the scrim, or picking anything inside, closes the drawer.
+  document.addEventListener("click", (e) => {
+    if (!document.body.classList.contains("rail-open")) return;
+    if (!e.target.closest(".rail") || e.target.closest("[data-folder],[data-threat],[data-label],[data-account]")) {
+      document.body.classList.remove("rail-open");
+    }
+  });
+  // The browser's own back gesture should leave the reader, not the app.
+  addEventListener("popstate", () => { if (document.body.classList.contains("reading")) leaveReader(); });
+}
+
+function enterReader() {
+  if (!isPhone()) return;
+  document.body.classList.add("reading");
+  history.pushState({ reading: true }, "");
+}
+
+function leaveReader() {
+  document.body.classList.remove("reading");
 }
 
 /** Back to the connect form without dropping the mailboxes already open. */
@@ -779,6 +831,7 @@ async function openMessage(id) {
   S.selected = id;
   mark("read", id, true);
   renderList();
+  enterReader();
   try {
     const a = await api(`/api/mailbox/messages/${encodeURIComponent(id)}`);
     renderRead(a, S.messages.find((m) => m.id === id));
@@ -803,8 +856,8 @@ function renderRead(a, item) {
   const threat = (item && item.threat) || [];
   const labels = (item && item.labels) || [];
 
-  const findings = a.findings.length ? a.findings.map((f) => `
-    <div class="find">
+  const findings = a.findings.length ? a.findings.map((f, fi) => `
+    <div class="find" style="--f:${Math.min(fi, 10)}">
       <span class="sev" style="background:${SEV_COLOR[f.severity] || "#8b8b86"}">${esc(f.severity)}</span>
       <div><b>${esc(f.title)}</b><div class="d">${esc(f.detail)}</div>${f.evidence ? `<div class="e">${esc(String(f.evidence).slice(0, 200))}</div>` : ""}</div>
       <span class="sc">${f.score}</span>
@@ -816,10 +869,11 @@ function renderRead(a, item) {
 
   $("#read").innerHTML = `
     <div class="rhead">
+      <button class="backbtn ghost sm" id="backToList">&larr; All messages</button>
       <div class="vline">
         <div class="vbadge ${a.verdict}">${icon(vIcon(a.verdict))}</div>
         <div><div class="vtitle">${esc(vTitle(a.verdict))}</div><div class="vsum">${esc(a.summary)}</div></div>
-        <div class="vscore"><div class="n">${a.score}</div><div class="l">RISK / 100</div></div>
+        <div class="vscore"><div class="n" data-score="${a.score}">0</div><div class="l">RISK / 100</div></div>
       </div>
       <div class="rsubject">${esc(m.subject || "(no subject)")}</div>
       <div class="rfrom"><b>${esc(m.from.name || m.from.address)}</b> <span class="muted">&lt;${esc(m.from.address)}&gt;</span></div>
@@ -889,6 +943,16 @@ function renderRead(a, item) {
         ${a.engines.map((e) => `<tr><td><b>${esc(e.name)}</b></td><td>${e.ran ? "yes" : "no"}</td><td class="muted">${esc(e.note)}</td></tr>`).join("")}
         </tbody></table></div>
     </div>`;
+
+  // Stagger the sections, and let the score climb to its value — a number
+  // that counts up reads as a measurement being taken rather than a constant.
+  $("#read").querySelectorAll(".rsec").forEach((el, i) => el.style.setProperty("--s", Math.min(i, 9)));
+  countUp($("#read").querySelector(".vscore .n"));
+
+  $("#backToList")?.addEventListener("click", () => {
+    if (history.state && history.state.reading) history.back();
+    else leaveReader();
+  });
 
   const btn = $("#editLabels");
   if (btn) btn.addEventListener("click", () => editLabels(a.id, labels));
@@ -969,7 +1033,41 @@ function openComposer(mode, analysis, item) {
 
 function closeComposer() {
   $("#composer").classList.remove("in");
-  setTimeout(() => $("#composer").classList.add("hidden"), 200);
+  setTimeout(() => $("#composer").classList.add("hidden"), 340);
+}
+
+/**
+ * Fold the window like a letter, drop it out of frame, and stamp it.
+ *
+ * Resolves when the composer is gone, so the caller can refresh the list
+ * behind it without the two animations fighting.
+ */
+function playSent(word = "Sent") {
+  return new Promise((resolve) => {
+    const win = document.querySelector(".cwin");
+    $("#composer").classList.add("sending");
+    win.classList.add("sending");
+
+    const seal = document.createElement("div");
+    seal.className = "sealwrap";
+    seal.innerHTML = `
+      <div class="seal">
+        <span class="ring">
+          <svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+        </span>
+        <span class="word">${esc(word)}</span>
+      </div>`;
+
+    // The seal lands as the letter clears the frame, not alongside it.
+    setTimeout(() => document.body.appendChild(seal), 420);
+    setTimeout(() => {
+      $("#composer").classList.remove("in", "sending");
+      $("#composer").classList.add("hidden");
+      win.classList.remove("sending");
+      resolve();
+    }, 820);
+    setTimeout(() => seal.remove(), 1960);
+  });
 }
 
 function setCarbon(on) {
@@ -1030,11 +1128,13 @@ async function sendComposed() {
     }
     if (!r.ok) throw new Error(body.error || r.statusText);
 
+    chime(body.analysis.verdict === "clean" ? "sent" : "warn");
+    // The letter flies while the list refreshes behind it.
+    const flight = playSent(body.simulated ? "Scanned" : "Sent");
     S.status = body.status;
     await loadMessages();
     renderRail(); renderList();
-    chime(body.analysis.verdict === "clean" ? "sent" : "warn");
-    closeComposer();
+    await flight;
     toast(body.simulated
       ? `Composed and scanned — nothing was sent, this is the demo mailbox.`
       : `Sent to ${body.accepted.length} recipient(s).${body.rejected.length ? ` ${body.rejected.length} refused.` : ""}`);
@@ -1049,6 +1149,7 @@ async function sendComposed() {
 
 function wireComposer() {
   $("#compose").addEventListener("click", () => openComposer("new"));
+  $("#composeFab").addEventListener("click", () => openComposer("new"));
   $("#cclose").addEventListener("click", closeComposer);
   $("#csend").addEventListener("click", sendComposed);
   $("#ccarbon").addEventListener("click", () => setCarbon($("#cccrow").classList.contains("hidden")));

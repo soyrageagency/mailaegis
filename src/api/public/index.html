@@ -130,6 +130,16 @@
       </section>
     </div>
 
+    <!--
+      The phone's compose button lives outside the rail on purpose: the rail
+      is a translated drawer, and a transformed ancestor makes position:fixed
+      resolve against it — so a button inside would slide off-screen with it.
+    -->
+    <button id="composeFab" class="cta fab only-mobile hidden" aria-label="Compose">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2v-8"/><path d="M17.5 3.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z"/></svg>
+      Compose
+    </button>
+
     <!-- ============================= COMPOSE ============================ -->
     <div id="composer" class="composer hidden" role="dialog" aria-label="New message" aria-modal="true">
       <div class="cwin">

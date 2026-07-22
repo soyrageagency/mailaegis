@@ -70,7 +70,11 @@ code{background:var(--code);padding:1px 6px;border-radius:5px;font-family:var(--
 .rail{border-right:1px solid var(--line);padding:16px 12px;overflow-y:auto;background:var(--rail)}
 /* Mailbox picker. A rail-height list does not survive eight mailboxes, so
    the switcher collapses to one line and opens a menu. */
-.picker{position:relative;margin-bottom:6px}
+/* The z-index matters: the rail's children each get an entrance animation,
+   and an animating transform gives them their own stacking context — which
+   let the sections below paint straight through the open menu. Lifting the
+   picker above its siblings settles it whatever they do. */
+.picker{position:relative;z-index:30;margin-bottom:6px}
 .pbtn,.popt{display:flex;align-items:center;gap:9px;width:100%;text-align:left;cursor:pointer;color:var(--ink)}
 .pbtn{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px 10px;transition:.15s}
 .pbtn:hover{border-color:var(--ink)}
@@ -300,13 +304,51 @@ body.dark .mrow.active,body.dark .mrow.picked,body.dark .frow.active,body.dark .
 .composebtn{width:100%;justify-content:center;padding:11px 18px;font-size:14px;margin-bottom:6px}
 .ractions{display:flex;gap:7px;margin:14px 0 2px}
 
-.composer{position:fixed;inset:0;z-index:50;display:grid;place-items:end center;padding:0 20px 20px;
-          background:rgba(17,17,17,.28);opacity:0;transition:opacity .2s ease}
+.composer{position:fixed;inset:0;z-index:50;display:grid;place-items:end center;padding:0 20px 0;
+          background:rgba(17,17,17,.28);opacity:0;transition:opacity .24s ease}
 .composer.in{opacity:1}
-.cwin{width:min(660px,100%);max-height:88vh;display:flex;flex-direction:column;background:var(--panel);
-      border:1px solid var(--line);border-radius:18px 18px 0 0;box-shadow:0 -10px 50px rgba(17,17,17,.2);
-      transform:translateY(24px);transition:transform .22s cubic-bezier(.2,.8,.3,1)}
+/* Rises from off-screen rather than fading in place: the window should feel
+   like it was pulled up from the bottom of the app, the way a drawer does. */
+.cwin{width:min(660px,100%);max-height:86vh;display:flex;flex-direction:column;background:var(--panel);
+      border:1px solid var(--line);border-bottom:none;border-radius:18px 18px 0 0;
+      box-shadow:0 -14px 60px rgba(17,17,17,.22);transform-origin:top center;
+      transform:translateY(100%);transition:transform .34s cubic-bezier(.16,.9,.28,1)}
 .composer.in .cwin{transform:none}
+
+/* Sending folds the window like a letter and drops it out of the frame. */
+@keyframes letterfold{
+  0%   {transform:none;opacity:1}
+  22%  {transform:scaleY(.97) translateY(-8px)}      /* a small lift, then */
+  55%  {transform:scaleY(.34) translateY(6%);opacity:1}   /* fold in half  */
+  70%  {transform:scaleY(.2) translateY(10%)}
+  100% {transform:scaleY(.16) translateY(135%) rotate(2deg);opacity:0}
+}
+.cwin.sending{animation:letterfold .8s cubic-bezier(.5,0,.25,1) forwards;pointer-events:none}
+.composer.sending{background:rgba(17,17,17,.12);transition:background .5s ease}
+
+/* The seal that confirms it left. */
+.sealwrap{position:fixed;inset:0;z-index:90;display:grid;place-items:center;pointer-events:none}
+.seal{display:flex;flex-direction:column;align-items:center;gap:11px;
+      animation:sealin 1.5s cubic-bezier(.2,.9,.3,1) forwards}
+.seal .ring{width:86px;height:86px;border-radius:50%;background:var(--ink);display:grid;place-items:center;
+            box-shadow:0 16px 44px rgba(17,17,17,.3)}
+.seal .ring svg{width:38px;height:38px;stroke:#fff;fill:none;stroke-width:2.2;
+                stroke-linecap:round;stroke-linejoin:round;
+                stroke-dasharray:30;stroke-dashoffset:30;animation:tick .42s .26s ease forwards}
+.seal .word{font-size:12px;font-weight:800;letter-spacing:.22em;text-transform:uppercase;color:var(--ink)}
+@keyframes sealin{
+  0%   {opacity:0;transform:scale(.55) rotate(-14deg)}
+  22%  {opacity:1;transform:scale(1.08) rotate(-3deg)}
+  34%  {transform:scale(1) rotate(0)}
+  72%  {opacity:1;transform:scale(1)}
+  100% {opacity:0;transform:scale(.94) translateY(-10px)}
+}
+@keyframes tick{to{stroke-dashoffset:0}}
+@media(prefers-reduced-motion:reduce){
+  .cwin.sending{animation-duration:.01s}
+  .seal,.seal .ring svg{animation:none}
+  .seal{opacity:1}
+}
 .chead{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;
        border-bottom:1px solid var(--line);font-size:13.5px;font-weight:700}
 .cfields{padding:4px 16px}
@@ -332,6 +374,50 @@ body.dark .mrow.active,body.dark .mrow.picked,body.dark .frow.active,body.dark .
 .cscan div{margin-top:5px}
 .cscan ul{margin:7px 0 5px;padding-left:17px}
 .cscan li{margin-bottom:2px}
+
+/* ------------------------------------------------------------- motion */
+/* Everything here is entrance only. Nothing loops, nothing moves while you
+   are reading, and every rule below is switched off for reduced motion. */
+@keyframes risein{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+@keyframes slidein{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
+
+/* The read pane arrives from the side — it replaced what was there before. */
+.rhead{animation:slidein .3s cubic-bezier(.2,.85,.3,1) both}
+.rbody .rsec{animation:risein .34s cubic-bezier(.2,.85,.3,1) both;animation-delay:calc(60ms + var(--s,0) * 45ms)}
+.find{animation:fadein .3s both;animation-delay:calc(var(--f,0) * 35ms)}
+
+/* The verdict badge lands with a little weight behind it. */
+@keyframes verdictpop{0%{transform:scale(.72);opacity:0}55%{transform:scale(1.07)}100%{transform:scale(1);opacity:1}}
+.vbadge{animation:verdictpop .42s cubic-bezier(.2,.9,.3,1) both}
+.vscore .n{font-variant-numeric:tabular-nums}
+
+/* Connect page: the cards rise as the page settles. */
+.hero h1{animation:risein .42s cubic-bezier(.2,.85,.3,1) both}
+.hero>p{animation:risein .42s .06s cubic-bezier(.2,.85,.3,1) both}
+.connectgrid>*{animation:risein .44s cubic-bezier(.2,.85,.3,1) both}
+.connectgrid>*:nth-child(2){animation-delay:.09s}
+
+/* Rail sections stagger in when a mailbox opens. */
+.client:not(.hidden) .rail>*{animation:risein .34s cubic-bezier(.2,.85,.3,1) both}
+.rail>*:nth-child(2){animation-delay:.04s}
+.rail>*:nth-child(3){animation-delay:.07s}
+.rail>*:nth-child(4){animation-delay:.1s}
+.rail>*:nth-child(n+5){animation-delay:.13s}
+
+.quickbar .qf,.savedbar .sv{animation:fadein .3s both}
+.pchip{animation:risein .3s both;animation-delay:calc(var(--p,0) * 22ms)}
+
+/* Interactive feedback: a press should feel like a press. */
+.cta:active,.ghost:active,.mgo:active,.chanbtn:active{transform:scale(.972)}
+.cta,.ghost,.mgo,.qf,.qs,.rt,.pchip,.mini,.iconbtn{transition:background .15s,color .15s,border-color .15s,transform .09s}
+.mrow{transition:background .13s}
+
+@media(prefers-reduced-motion:reduce){
+  .rhead,.rbody .rsec,.find,.vbadge,.hero h1,.hero>p,.connectgrid>*,
+  .client:not(.hidden) .rail>*,.quickbar .qf,.savedbar .sv,.pchip{animation:none}
+  .cta:active,.ghost:active,.mgo:active,.chanbtn:active{transform:none}
+}
 
 /* --------------------------------------------------------------- toasts */
 .toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);z-index:70;
@@ -378,6 +464,19 @@ body.dark .mrow.active,body.dark .mrow.picked,body.dark .frow.active,body.dark .
 .chanbtn:hover{background:#000;color:#fff}
 .chanlater{background:none;border:none;color:var(--mute);font-size:12.5px;font-weight:600;cursor:pointer;padding:8px 4px}
 .chanlater:hover{color:var(--ink)}
+/* The thank-you card gets the mark itself rather than a status icon. */
+.chancard.thanks{padding:18px 18px 15px}
+.thankmark{width:34px;height:34px;border-radius:11px;background:var(--ink);color:var(--bg);
+           display:grid;place-items:center;margin-bottom:11px}
+.thankmark svg{width:19px;height:19px;display:block}
+.thanks .chantitle{font-size:15px;padding:0}
+.thanks .chanbody{margin-top:7px}
+.chanbtn.star{display:inline-flex;align-items:center;gap:7px}
+.chanbtn.star svg{width:13px;height:13px;display:block}
+.chanheart{font-size:12.5px;font-weight:700;color:var(--mute);padding:8px 4px;text-decoration:underline}
+.chanheart:hover{color:var(--ink)}
+body.dark .thankmark{background:var(--accent);color:#08131c}
+
 .lvl-success .chanic{background:var(--t-green)}
 .lvl-warn .chanic{background:var(--t-yellow)}
 .lvl-critical .chanic{background:var(--t-red);color:var(--mal)}
@@ -390,7 +489,7 @@ body.dark .mrow.active,body.dark .mrow.picked,body.dark .frow.active,body.dark .
 .iconbtn{background:none;border:none;padding:6px;border-radius:9px;cursor:pointer;color:var(--ink);display:grid;place-items:center}
 .iconbtn svg{width:22px;height:22px}
 .iconbtn:hover{background:var(--hover)}
-.backbtn{display:none}
+.backbtn{display:none;margin-bottom:14px}
 
 @media(max-width:1180px){.client{grid-template-columns:200px 330px 1fr}}
 @media(max-width:1024px){.client{grid-template-columns:190px 1fr}.readpane{display:none}
@@ -413,16 +512,39 @@ body.dark .mrow.active,body.dark .mrow.picked,body.dark .frow.active,body.dark .
   .connectgrid{grid-template-columns:1fr;gap:12px}
   .row.two{grid-template-columns:1fr}
 
-  .client{display:block;border-top:none}
+  /* The header only has room for the brand and the toggles. Disconnecting
+     lives in the mailbox picker anyway, and the file analyser on the connect
+     screen. */
+  #analyseFile,#disconnect{display:none}
+
+  /* `.client` is a flex child, so it is handed a viewport-height box. On a
+     phone the panes stack and grow instead, and the pane must not scroll
+     inside a box it no longer fits — that is what painted the read pane over
+     the footer. */
+  .client{display:block;border-top:none;flex:none;height:auto;min-height:0}
+  /* The rail keeps its own scroll — it is a fixed-position drawer. */
+  .readpane,.list{overflow:visible}
+  .listpane{min-height:0}
   .rail{position:fixed;top:0;left:0;bottom:0;width:270px;z-index:30;background:var(--bg);
         border-right:1px solid var(--line);transform:translateX(-100%);transition:transform .22s ease;
         box-shadow:0 0 40px rgba(17,17,17,.14);padding-top:20px}
   body.rail-open .rail{transform:none}
   body.rail-open::after{content:"";position:fixed;inset:0;background:rgba(17,17,17,.35);z-index:20}
-  .listpane{display:flex;border-right:none;min-height:60vh}
+  .listpane{display:flex;border-right:none}
   .readpane{display:none}
   body.reading .listpane{display:none}
   body.reading .readpane{display:block}
+  .backbtn{display:inline-flex}
+  /* The in-rail button is for the drawer; the floating one is the real
+     entry point while the drawer is closed. */
+  .fab{display:inline-flex;position:fixed;right:16px;bottom:16px;width:auto;z-index:14;
+       padding:13px 20px;box-shadow:0 10px 30px rgba(17,17,17,.28)}
+  body.rail-open .fab{display:none}
+  /* Row tools would sit on top of the timestamp at this width. Pin, flag and
+     select stay available from the reader and the keyboard. */
+  .rowtools{display:none!important}
+  .quickbar{padding:0 12px 8px}
+  .cwin{max-height:92vh;border-radius:16px 16px 0 0}
   .listtools{padding:10px 12px}
   .mrow .body{padding:11px 12px}
   .rhead{padding:16px 16px 14px}
