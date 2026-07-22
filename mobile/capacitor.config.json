@@ -1,0 +1,14 @@
+{
+  "appId": "es.soyrage.mailaegis",
+  "appName": "MailAegis",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#f3f1ea"
+  },
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true,
+    "allowNavigation": ["*"]
+  }
+}

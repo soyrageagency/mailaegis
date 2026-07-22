@@ -1351,4 +1351,35 @@ function wireShortcuts() {
   });
 }
 
+// ------------------------------------------------------------------- PWA
+/*
+ * Registered from a secure context only. Over plain HTTP on a LAN address the
+ * browser refuses anyway, and swallowing that failure is better than logging
+ * an error someone will file as a bug.
+ */
+function wirePwa() {
+  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+
+  // Chrome and Edge hand us the install prompt to fire when it suits us; the
+  // card only appears once we actually hold one.
+  let deferred = null;
+  addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferred = e;
+    $("#installCard").classList.remove("hidden");
+  });
+  $("#installBtn").addEventListener("click", async () => {
+    if (!deferred) return;
+    deferred.prompt();
+    const { outcome } = await deferred.userChoice;
+    deferred = null;
+    $("#installCard").classList.add("hidden");
+    if (outcome === "accepted") toast("MailAegis added to your home screen.");
+  });
+  addEventListener("appinstalled", () => $("#installCard").classList.add("hidden"));
+}
+
 init();
+wirePwa();

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>MailAegis</title>
+    <!--
+      The Android app's front door.
+
+      MailAegis analyses mail in a Node process — MIME parsing, ClamAV, IMAP,
+      SMTP — and that does not run inside an APK. So the app is a client: point
+      it at your own MailAegis, on your domain or on the LAN, and everything
+      after this screen is the same interface as the desktop.
+
+      Crafted by SoyRage Agency — https://soyrage.es/
+      Attribution must remain intact (see LICENSE).
+    -->
+    <style>
+      :root{
+        --bg:#f3f1ea;--panel:#fff;--ink:#111;--mute:#8b8b86;--line:#e7e3da;--accent:#3b9ee8;
+        --grid:rgba(17,17,17,.035);--field:#fbfaf6;
+        --sans:"Inter","Segoe UI",system-ui,-apple-system,sans-serif;
+        --mono:"SFMono-Regular",Consolas,monospace;
+      }
+      @media (prefers-color-scheme: dark){
+        :root{--bg:#141412;--panel:#1c1c1a;--ink:#f0efe9;--mute:#8f8f88;--line:#2f2f2a;
+              --grid:rgba(240,239,233,.028);--field:#1f1f1c}
+      }
+      *{box-sizing:border-box}
+      body{margin:0;min-height:100vh;color:var(--ink);font-family:var(--sans);
+        -webkit-font-smoothing:antialiased;
+        background-color:var(--bg);
+        background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+        background-size:46px 46px;
+        display:flex;flex-direction:column;justify-content:center;
+        padding:28px 22px calc(28px + env(safe-area-inset-bottom));}
+      .mark{width:52px;height:52px;border-radius:15px;background:var(--ink);display:grid;place-items:center;margin-bottom:22px}
+      .mark svg{width:28px;height:28px;display:block}
+      h1{font-size:26px;line-height:1.15;letter-spacing:-.03em;font-weight:800;margin:0 0 10px}
+      h1 .a{color:var(--accent)}
+      p{color:var(--mute);font-size:14px;line-height:1.55;margin:0 0 24px}
+      label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;
+            font-weight:700;color:var(--mute);margin-bottom:6px}
+      input{width:100%;border:1px solid var(--line);border-radius:12px;padding:14px 15px;
+            font-size:16px;background:var(--field);color:var(--ink);outline:none;font-family:var(--mono)}
+      input:focus{border-color:var(--accent)}
+      button{width:100%;margin-top:14px;background:var(--ink);color:var(--bg);border:none;
+             border-radius:999px;padding:15px 24px;font-size:15px;font-weight:700;cursor:pointer}
+      button:active{transform:scale(.985)}
+      .err{margin-top:12px;background:#f1ddd9;color:#8a3a33;border-radius:11px;padding:11px 13px;
+           font-size:13px;line-height:1.5;display:none}
+      .hint{margin-top:20px;font-size:12px;line-height:1.6;color:var(--mute)}
+      .hint code{font-family:var(--mono);background:rgba(128,128,128,.16);padding:1px 6px;border-radius:5px}
+      .foot{margin-top:28px;font-size:11.5px;color:var(--mute)}
+      .foot a{color:var(--ink);font-weight:600;text-decoration:underline}
+      .again{display:none;margin-top:16px;text-align:center;font-size:13px;color:var(--mute)}
+      .again a{color:var(--accent);font-weight:700;text-decoration:underline}
+    </style>
+  </head>
+  <body>
+    <div class="mark">
+      <svg viewBox="0 0 120 120" aria-label="MailAegis">
+        <path fill="#f3f1ea" fill-rule="evenodd" clip-rule="evenodd"
+              d="M20 12 H68 L92 32 V54 L72 69 L101 108 H73 L51 74 H42 V108 H20 Z M42 32 V56 H64 L74 48 V40 L64 32 Z"/>
+        <path fill="#3b9ee8" d="M78 6 H106 L86 28 Z"/>
+      </svg>
+    </div>
+
+    <h1>Mail<span class="a">Aegis</span></h1>
+    <p>Point this at your own MailAegis and you get the full client — mailboxes, verdicts, compose — on your phone.</p>
+
+    <label for="url">Your MailAegis address</label>
+    <input id="url" type="url" inputmode="url" autocomplete="url" autocapitalize="off"
+           autocorrect="off" spellcheck="false" placeholder="https://mail.yourcompany.com" />
+    <button id="go">Connect</button>
+    <div class="err" id="err"></div>
+
+    <div class="again" id="again">
+      Taking you to <b id="lastHost"></b>… <a href="#" id="stay">use a different server</a>
+    </div>
+
+    <p class="hint">
+      Run <code>mailaegis serve</code> on a machine your phone can reach — your own domain
+      behind HTTPS, or a LAN address like <code>http://192.168.1.20:4850</code>.
+      Nothing is sent to us: this app only ever talks to the address you type.
+    </p>
+
+    <div class="foot">
+      Crafted by <a href="https://soyrage.es/">SoyRage Agency</a> ·
+      <a href="https://github.com/soyrageagency/mailaegis">Source on GitHub</a>
+    </div>
+
+    <script>
+      "use strict";
+      var KEY = "mailaegis.server";
+      var input = document.getElementById("url");
+      var err = document.getElementById("err");
+
+      function fail(message) {
+        err.textContent = message;
+        err.style.display = "block";
+      }
+
+      /** Accept what people actually type, and reject what cannot work. */
+      function normalise(raw) {
+        var value = String(raw || "").trim();
+        if (!value) return null;
+        // A bare host is overwhelmingly meant as http on a LAN or https on a
+        // domain; guessing https for anything with a dot is the safer default.
+        if (!/^https?:\/\//i.test(value)) {
+          value = (/^(localhost|\d{1,3}(\.\d{1,3}){3})(:\d+)?/i.test(value) ? "http://" : "https://") + value;
+        }
+        try {
+          var url = new URL(value);
+          if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+          return url.origin + (url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, ""));
+        } catch (e) { return null; }
+      }
+
+      function connect(target, remember) {
+        err.style.display = "none";
+        // Confirm something is actually listening before navigating, so a typo
+        // produces a sentence rather than a blank webview.
+        var controller = new AbortController();
+        var timer = setTimeout(function () { controller.abort(); }, 8000);
+        fetch(target + "/api/meta", { signal: controller.signal })
+          .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("responded " + r.status)); })
+          .then(function (meta) {
+            clearTimeout(timer);
+            if (!meta || meta.short !== "MailAegis") throw new Error("that is not a MailAegis server");
+            if (remember) { try { localStorage.setItem(KEY, target); } catch (e) {} }
+            location.href = target + "/";
+          })
+          .catch(function (e) {
+            clearTimeout(timer);
+            document.getElementById("again").style.display = "none";
+            fail("Could not reach " + target + " — " + (e && e.message ? e.message : "no response") +
+                 ". Check the address, and that your phone is on the same network.");
+          });
+      }
+
+      document.getElementById("go").addEventListener("click", function () {
+        var target = normalise(input.value);
+        if (!target) return fail("That does not look like a web address.");
+        connect(target, true);
+      });
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") document.getElementById("go").click();
+      });
+
+      // Reconnect to the last server, but visibly and cancellably — a silent
+      // redirect makes the app impossible to point somewhere else.
+      var saved = null;
+      try { saved = localStorage.getItem(KEY); } catch (e) {}
+      if (saved) {
+        input.value = saved;
+        document.getElementById("lastHost").textContent = saved;
+        document.getElementById("again").style.display = "block";
+        var pending = setTimeout(function () { connect(saved, true); }, 1400);
+        document.getElementById("stay").addEventListener("click", function (e) {
+          e.preventDefault();
+          clearTimeout(pending);
+          document.getElementById("again").style.display = "none";
+          try { localStorage.removeItem(KEY); } catch (err2) {}
+          input.focus();
+          input.select();
+        });
+      }
+    </script>
+  </body>
+</html>

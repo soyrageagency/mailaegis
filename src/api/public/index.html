@@ -12,7 +12,11 @@
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="alternate icon" href="favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="icon-180.png" />
+    <link rel="manifest" href="manifest.webmanifest" />
     <meta name="theme-color" content="#f3f1ea" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="MailAegis" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="description" content="MailAegis inspects every corporate message — attachments, links, headers and intent — with VirusTotal, ClamAV, SPF/DKIM/DMARC and its own phishing/BEC engine." />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -79,6 +83,11 @@
               <p class="muted">Drop an <code>.eml</code> file and get a full verdict without connecting anything.</p>
               <input type="file" id="file" accept=".eml,message/rfc822,text/plain" hidden />
               <button id="pick" class="ghost full">Analyse an .eml file</button>
+            </div>
+            <div class="panel try hidden" id="installCard">
+              <h2>Install it</h2>
+              <p class="muted">Add MailAegis to your home screen and it opens like an app — full screen, its own icon, no browser bar.</p>
+              <button id="installBtn" class="ghost full">Install MailAegis</button>
             </div>
           </div>
         </div>

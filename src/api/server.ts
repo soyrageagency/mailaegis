@@ -36,6 +36,9 @@ const PUBLIC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "public");
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml",
+  ".png": "image/png", ".ico": "image/x-icon",
+  // Browsers ignore a manifest served as anything else.
+  ".webmanifest": "application/manifest+json",
 };
 /** Refuse absurd bodies outright — a mail gateway must not be a memory bomb. */
 const MAX_BODY_BYTES = 40 * 1024 * 1024;

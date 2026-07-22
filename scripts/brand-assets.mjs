@@ -160,6 +160,46 @@ function grid(w, h, step = 23, opacity = 0.05) {
   return `<path d="${d}" stroke="${INK}" stroke-width="1" opacity="${opacity}"/>`;
 }
 
+/** A plain fill — the adaptive icon's background layer. */
+function flat(size, colour) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <rect width="${size}" height="${size}" fill="${colour}"/>
+  </svg>`;
+}
+
+/**
+ * The adaptive icon's foreground layer.
+ *
+ * Android crops this to whatever shape the launcher uses, keeping only the
+ * middle ~66%. So the mark is drawn at that scale on transparency; anything
+ * larger loses its corners on a circular launcher.
+ */
+function androidForeground(size) {
+  const art = size * 0.42;
+  const offset = (size - art) / 2;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <g transform="translate(${offset} ${offset}) scale(${art / 120})">${monogram(CREAM, ACCENT)}</g>
+  </svg>`;
+}
+
+/** The launch screen: the mark and the wordmark, centred on the brand grid. */
+function splash(size, background, ink) {
+  const c = size / 2;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <rect width="${size}" height="${size}" fill="${background}"/>
+    ${grid(size, size, size / 24, 0.035)}
+    <g transform="translate(${c - size * 0.075} ${c - size * 0.115})">
+      <rect width="${size * 0.15}" height="${size * 0.15}" rx="${size * 0.034}" fill="${ink}"/>
+      <g transform="translate(${size * 0.019} ${size * 0.019}) scale(${(size * 0.112) / 120})">${monogram(background, ACCENT)}</g>
+    </g>
+    <text x="${c}" y="${c + size * 0.075}" text-anchor="middle" font-family="${FONT}"
+          font-size="${size * 0.042}" font-weight="800" letter-spacing="${-size * 0.0012}"
+          fill="${ink}">Mail<tspan fill="${ACCENT}">Aegis</tspan></text>
+    <text x="${c}" y="${c + size * 0.105}" text-anchor="middle" font-family="${FONT}"
+          font-size="${size * 0.0155}" fill="${ink}" opacity="0.55">Corporate Email Threat Analyzer</text>
+  </svg>`;
+}
+
 /** NSIS welcome/finish sidebar — the panel that currently looks like a virus. */
 function sidebar(w = 164, h = 314) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
@@ -293,6 +333,17 @@ await bmp(sidebar(), 164, 314, "desktop/build/installerSidebar.bmp");
 await bmp(sidebar(), 164, 314, "desktop/build/uninstallerSidebar.bmp");
 await bmp(headerStrip(), 150, 57, "desktop/build/installerHeader.bmp");
 await png(dmgBackground(), 540, "desktop/build/dmg-background.png", 380);
+
+console.log("• android");
+// @capacitor/assets expands these into every density and the adaptive-icon
+// layers. The foreground keeps the mark inside Android's safe zone — the
+// launcher can crop a circle out of it, and a mark drawn edge to edge loses
+// its corners.
+await png(tile(1024), 1024, "mobile/assets/icon.png");
+await png(androidForeground(1024), 1024, "mobile/assets/icon-foreground.png");
+await png(flat(1024, INK), 1024, "mobile/assets/icon-background.png");
+await png(splash(2732, CREAM, INK), 2732, "mobile/assets/splash.png");
+await png(splash(2732, "#141412", CREAM), 2732, "mobile/assets/splash-dark.png");
 
 console.log("• docs");
 await png(tile(512), 512, "assets/mark-tile.png");

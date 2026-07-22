@@ -39,3 +39,8 @@ Thumbs.db
 # Test / coverage
 coverage/
 .nyc_output/
+
+# Capacitor generates the native Android project from capacitor.config.json,
+# so it is a build artefact rather than source.
+mobile/android/
+mobile/dist/

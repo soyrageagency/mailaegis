@@ -87,9 +87,92 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  android:
+    name: Build the Android app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      # The analyzer is a Node server and does not run inside an APK, so the
+      # Android app is a client: it asks for the address of your own MailAegis
+      # and loads it. `mobile/www` is that one screen.
+      - name: Generate the Android project
+        working-directory: mobile
+        run: |
+          npm install
+          npx cap add android
+          npx capacitor-assets generate --android --assetPath assets
+          npx cap sync android
+
+      - name: Stamp the version from the tag
+        working-directory: mobile
+        shell: bash
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          # versionCode must increase monotonically, so derive it from the
+          # semver parts rather than a build counter that resets.
+          CODE=$(echo "$VERSION" | awk -F. '{printf "%d", ($1*10000)+($2*100)+$3}')
+          echo "Android versionName=$VERSION versionCode=$CODE"
+          sed -i "s/versionName \".*\"/versionName \"$VERSION\"/" android/app/build.gradle
+          sed -i "s/versionCode [0-9]*/versionCode $CODE/" android/app/build.gradle
+          echo "APK_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      # A release APK signed with a real keystore can be upgraded in place; a
+      # debug-signed one cannot. So we sign properly when the secret exists and
+      # fall back to debug when it does not, rather than shipping nothing.
+      - name: Build the APK
+        working-directory: mobile/android
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          mkdir -p ../dist
+          if [ -n "$KEYSTORE" ]; then
+            echo "Signing with the release keystore."
+            echo "$KEYSTORE" | base64 -d > release.keystore
+            ./gradlew assembleRelease --no-daemon
+            BUILD_TOOLS=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+            "$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner" sign \
+              --ks release.keystore \
+              --ks-pass "pass:$KEYSTORE_PASSWORD" \
+              --ks-key-alias "$KEY_ALIAS" \
+              --key-pass "pass:$KEY_PASSWORD" \
+              --out "../dist/MailAegis-${APK_VERSION}-android.apk" \
+              app/build/outputs/apk/release/app-release-unsigned.apk
+            rm -f release.keystore
+          else
+            echo "No ANDROID_KEYSTORE_BASE64 secret — producing a debug-signed APK."
+            ./gradlew assembleDebug --no-daemon
+            cp app/build/outputs/apk/debug/app-debug.apk "../dist/MailAegis-${APK_VERSION}-android.apk"
+          fi
+          ls -la ../dist
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: mailaegis-android
+          path: mobile/dist/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Publish the release
-    needs: build
+    needs: [build, android]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -112,17 +195,31 @@ jobs:
             Desktop builds of the mail client with an antivirus layer: VirusTotal reputation,
             ClamAV content scanning, SPF/DKIM/DMARC and an in-house phishing/BEC engine.
 
-            | Platform | File |
-            | --- | --- |
-            | macOS (Apple Silicon) | `MailAegis-*-mac-arm64.dmg` |
-            | macOS (Intel) | `MailAegis-*-mac-x64.dmg` |
-            | Windows | `MailAegis-*-win-x64.exe` |
+            | Platform | File | Notes |
+            | --- | --- | --- |
+            | macOS (Apple Silicon) | `MailAegis-*-mac-arm64.dmg` | Right-click → Open the first time |
+            | macOS (Intel) | `MailAegis-*-mac-x64.dmg` | Right-click → Open the first time |
+            | Windows | `MailAegis-*-win-x64.exe` | "More info" → "Run anyway" |
+            | Android | `MailAegis-*-android.apk` | Sideload — allow install from unknown sources |
 
-            > These builds are **not code-signed**. On macOS: right-click → Open the first
-            > time. On Windows: "More info" → "Run anyway".
+            > The desktop builds are **not code-signed**, so both operating systems will
+            > warn you. The source is public if you would rather read it first.
+
+            **About the Android app.** MailAegis analyses mail in a Node process — MIME
+            parsing, ClamAV, IMAP, SMTP — and that does not run inside an APK. So the
+            Android app is a **client**: it asks for the address of your own MailAegis
+            (`mailaegis serve` on your domain or your LAN) and gives you the full
+            interface on your phone. The web UI is fully responsive too, so you can skip
+            the APK entirely and just add the page to your home screen.
 
             Configuration (VirusTotal key, ClamAV host, your corporate domains) goes in
             `settings.json` inside the app's user-data folder — **Help → Open settings folder**.
 
             Prefer the CLI or the HTTP API? See the [README](https://github.com/soyrageagency/mailaegis#readme).
+
+            ---
+
+            MailAegis is free and open source, and stays that way. If it catches something
+            for you, a ⭐ is how other teams find it — and
+            [support](https://www.paypal.com/paypalme/soyrageagency) keeps the work going.
           files: artifacts/**/*

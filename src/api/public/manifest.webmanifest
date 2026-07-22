@@ -1,0 +1,26 @@
+{
+  "name": "MailAegis — Corporate Email Threat Analyzer",
+  "short_name": "MailAegis",
+  "description": "Your corporate inbox with an antivirus layer: phishing, malware and BEC detection with VirusTotal, ClamAV, SPF/DKIM/DMARC and delivery-path forensics.",
+  "id": "es.soyrage.mailaegis",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f1ea",
+  "theme_color": "#f3f1ea",
+  "categories": ["business", "productivity", "security", "utilities"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Compose a message",
+      "short_name": "Compose",
+      "url": "/?action=compose",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

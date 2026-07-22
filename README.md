@@ -53,6 +53,7 @@ an **HTTP API**, or a **Postfix / SMTPS content filter** with proper exit codes.
 - [Quick start](#-quick-start)
 - [See it](#-see-it)
 - [On a phone, too](#-on-a-phone-too)
+- [Get it on your phone](#-two-ways-to-get-it-on-your-phone)
 - [What it detects](#-what-it-detects)
 - [The mail client](#-the-mail-client)
 - [How it works](#-how-it-works)
@@ -209,6 +210,49 @@ from anywhere, no app store involved.
 </table>
 
 <sub>Every screenshot above is <b>demo mode</b>, unretouched — it is exactly what <code>npx mailaegis serve --demo</code> gives you. © SoyRage Agency · soyrage.es</sub>
+
+</div>
+
+### 📲 Two ways to get it on your phone
+
+<table>
+<tr>
+<td width="58%" valign="top">
+
+**1 · Add to home screen — no install needed**
+
+MailAegis is a **PWA**. Open your hosted instance in Chrome or Safari and tap
+*Add to Home Screen*. You get the app icon, full screen, no browser bar, and the
+interface loads instantly even on a bad connection.
+
+> The service worker caches the **interface only**. Message data is fetched
+> fresh every time and never written to storage — a security tool that leaves
+> someone's mail in a browser cache on a lost phone has created the problem it
+> was bought to prevent.
+
+**2 · Install the APK**
+
+<a href="https://github.com/soyrageagency/mailaegis/releases/latest"><img src="https://img.shields.io/badge/Download-APK-3b9ee8?style=for-the-badge&logo=android&logoColor=white" alt="Download the MailAegis Android APK"></a>
+
+1. Grab `MailAegis-*-android.apk` from the [latest release](https://github.com/soyrageagency/mailaegis/releases/latest).
+2. Open it and allow **install from unknown sources** when Android asks.
+3. Enter the address of your MailAegis — `https://mail.yourcompany.com` or a LAN
+   address like `http://192.168.1.20:4850`. It remembers it.
+
+**Why the app asks for an address.** MailAegis analyses mail in a Node process —
+MIME parsing, ClamAV, IMAP, SMTP — and that does not run inside an APK. So the
+Android app is a **client** for the server you already run. It talks to nothing
+else; there is no MailAegis cloud to sign up for.
+
+</td>
+<td width="42%" valign="top" align="center">
+<img src="./assets/screenshots/android-connect.png" alt="MailAegis Android app connection screen asking for the address of your own MailAegis server" width="76%">
+<br/><sub>The APK's first screen</sub>
+</td>
+</tr>
+</table>
+
+<div align="center">
 
 </div>
 
