@@ -1693,12 +1693,23 @@ async function refreshNow(quiet = false) {
   refreshing = true;
   try {
     const seen = new Set(S.messages.map((m) => m.id));
-    const account = activeAccount();
-    if (account) {
-      // Re-selecting the current folder is what actually re-fetches from IMAP.
+    // Re-selecting the current folder is what actually re-fetches from IMAP.
+    // In the unified view there is no single account in focus, so every
+    // connected mailbox is refreshed — otherwise "All mailboxes" would be the
+    // one place auto-refresh silently did nothing.
+    const targets = activeAccount() ? [activeAccount()] : (S.status.accounts || []);
+    const viewing = S.status.activeId;
+    for (const account of targets) {
       S.status = await api("/api/mailbox/select", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ account: account.id, folder: account.mailbox }),
+      });
+    }
+    // Selecting a folder moves the focus to that account, so put it back.
+    if (S.status.activeId !== viewing) {
+      S.status = await api("/api/mailbox/active", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account: viewing }),
       });
     }
     await loadMessages();

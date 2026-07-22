@@ -215,6 +215,19 @@ if (up) {
   ok("export: the filename cannot escape the download folder", !/[\\/]/.test((rawRes.headers.get("content-disposition") || "").split("filename=")[1] || ""));
   ok("export: an unknown id is a 404", (await fetch(`${B}/api/mailbox/messages/nope/raw`)).status === 404);
 
+  // ---- Malformed input is the caller's fault, not a server fault -----------
+  for (const [p, payload, what] of [
+    ["/api/mailbox/send", "not json", "garbage"],
+    ["/api/mailbox/send", "[1,2,3]", "an array"],
+    ["/api/mailbox/connect", '"a string"', "a bare string"],
+    ["/api/lists", "null", "null"],
+    ["/api/categories", "{oops}", "broken JSON"],
+  ]) {
+    const r = await fetch(B + p, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload });
+    ok(`400: ${what} to ${p} is a 400, never a 500`, r.status === 400, String(r.status));
+  }
+  ok("400: an empty body still means 'no options'", (await fetch(`${B}/api/mailbox/connect`, { method: "POST" })).status === 200);
+
   // ---- Sender lists over the API -------------------------------------------
   const corpus = (await (await fetch(`${B}/api/samples`)).json()).samples;
   const cleanSample = corpus.find((s) => s.id === "clean-invoice") || corpus[0];
@@ -406,6 +419,33 @@ await new Promise((r) => setTimeout(r, 150));
   await sendMail(creds, "ana@corp.example", ["nope@partner.example"], raw).catch((e) => { threw = e.message; });
   ok("smtp: every recipient refused is an error", /Every recipient was refused/.test(threw), threw);
   fake.close();
+}
+
+// ---- RFC 2047: folded encoded-words --------------------------------------
+{
+  const { decodeWords } = await import("../dist/core/parse.js");
+
+  // Encoders break long headers wherever the 75-column limit falls, so a
+  // Spanish or Japanese subject almost always arrives as several words. The
+  // whitespace between two of them is a fold and must be discarded — leaving
+  // it in puts a space inside a word and every subject rule misses.
+  ok("2047: adjacent encoded-words join without a space",
+    decodeWords("=?UTF-8?B?Q29uZmlybWFjacOzbiBkZSBsYSA=?= =?UTF-8?B?dHJhbnNmZXJlbmNpYQ==?=") === "Confirmación de la transferencia",
+    decodeWords("=?UTF-8?B?Q29uZmlybWFjacOzbiBkZSBsYSA=?= =?UTF-8?B?dHJhbnNmZXJlbmNpYQ==?="));
+  ok("2047: a fold across lines joins too",
+    decodeWords("=?UTF-8?B?Q29uZmlybWFjacOzbiBkZSBsYSA=?=\r\n =?UTF-8?B?dHJhbnNmZXJlbmNpYQ==?=") === "Confirmación de la transferencia");
+  ok("2047: quoted-printable words join as well",
+    decodeWords("=?UTF-8?Q?Confirmaci=C3=B3n_de_la_?= =?UTF-8?Q?transferencia?=") === "Confirmación de la transferencia");
+  // A space that is not between two encoded-words is a real space.
+  ok("2047: a real space before plain text survives", decodeWords("=?UTF-8?B?SG9sYQ==?= mundo") === "Hola mundo");
+  ok("2047: a real space after plain text survives", decodeWords("Re: =?UTF-8?B?QcOxbw==?=") === "Re: Año");
+  ok("2047: plain subjects are untouched", decodeWords("Invoice INV-2026-0418") === "Invoice INV-2026-0418");
+
+  // And what we compose must survive our own parser.
+  const { buildMime } = await import("../dist/mailbox/compose.js");
+  const long = "ñ".repeat(60);
+  const round = parseMessage(buildMime({ from: "a@x.example", to: ["b@y.example"], cc: [], bcc: [], subject: long, text: "x", html: "", attachments: [] }));
+  ok("2047: a long composed subject round-trips through our parser", round.subject === long, round.subject.slice(0, 30));
 }
 
 // ---- Audit trail and the SIEM webhook ---------------------------------------

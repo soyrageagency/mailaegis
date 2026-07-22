@@ -65,6 +65,33 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
   });
 }
 
+/**
+ * A JSON body, or a 400.
+ *
+ * Thrown as a marked error so the outer handler can tell "the client sent
+ * rubbish" apart from "we broke". Malformed input is the caller's mistake and
+ * must never be reported as a server fault — a 500 sends whoever is
+ * integrating off to read our logs instead of their own request.
+ */
+class BadRequest extends Error {}
+
+async function jsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const raw = (await readBody(req)).toString("utf8").trim();
+  if (!raw) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new BadRequest("The request body is not valid JSON.");
+  }
+  // An array or a bare string parses fine but is not a request object, and
+  // reading `.host` off it would silently produce undefined.
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new BadRequest("The request body must be a JSON object.");
+  }
+  return parsed as Record<string, unknown>;
+}
+
 /** Constant-time-ish bearer check. */
 function authorised(req: IncomingMessage, config: AppConfig): boolean {
   if (!config.apiToken) return true;
@@ -127,7 +154,7 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
 
       if (path === "/api/mailbox/connect" && req.method === "POST") {
         if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
-        const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as Record<string, unknown>;
+        const body = await jsonBody(req) as unknown as Record<string, unknown>;
         if (body.demo === true || (config.demo && !config.imapHost && !body.host)) {
           logger.info("mailbox: loading the demo corpus");
           return json(res, 200, await mailbox.connectDemo(config, String(body.label ?? "")));
@@ -154,7 +181,7 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
 
       if (path === "/api/mailbox/select" && req.method === "POST") {
         if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
-        const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as { folder?: string; account?: string };
+        const body = await jsonBody(req) as unknown as { folder?: string; account?: string };
         const status = mailbox.getStatus();
         if (!status.connected) return json(res, 409, { error: "Not connected." });
         // Folders belong to an account, so fall back to whichever one is in
@@ -166,7 +193,7 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
       // Switch the view between one account and the unified inbox ("" = all).
       if (path === "/api/mailbox/active" && req.method === "POST") {
         if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
-        const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as { account?: string };
+        const body = await jsonBody(req) as unknown as { account?: string };
         return json(res, 200, mailbox.setActive(String(body.account ?? "")));
       }
 
@@ -192,7 +219,7 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
 
       if (path === "/api/lists" && req.method === "POST") {
         if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
-        const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as { kind?: string; value?: string; note?: string };
+        const body = await jsonBody(req) as unknown as { kind?: string; value?: string; note?: string };
         const kind = body.kind === "allowed" ? "allowed" : "blocked";
         try {
           lists.add(kind, String(body.value ?? ""), String(body.note ?? ""));
@@ -225,7 +252,7 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
 
       if (path === "/api/categories" && req.method === "POST") {
         if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
-        const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as { name?: string; colour?: string };
+        const body = await jsonBody(req) as unknown as { name?: string; colour?: string };
         try {
           const created = categories.create(String(body.name ?? ""), body.colour);
           return json(res, 200, { category: created, categories: categories.list() });
@@ -245,7 +272,7 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
         if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
         const id = decodeURIComponent(path.split("/")[4]);
         if (!mailbox.get(id)) return json(res, 404, { error: "Unknown message." });
-        const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as { labels?: string[] };
+        const body = await jsonBody(req) as unknown as { labels?: string[] };
         const applied = categories.assign(id, Array.isArray(body.labels) ? body.labels.map(String) : []);
         mailbox.refreshLabels();
         return json(res, 200, { labels: applied, messages: mailbox.list() });
@@ -279,7 +306,7 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
       // not what leaves is only watching half the door.
       if (path === "/api/mailbox/send" && req.method === "POST") {
         if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
-        const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as Record<string, unknown>;
+        const body = await jsonBody(req) as unknown as Record<string, unknown>;
         const status = mailbox.getStatus();
         if (!status.connected) return json(res, 409, { error: "Connect a mailbox first." });
         const account = String(body.account ?? "") || status.activeId || status.accounts[0]!.id;
@@ -336,7 +363,7 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
       // No body (or no account) disconnects everything; naming one account
       // leaves the other mailboxes connected.
       if (path === "/api/mailbox/disconnect" && req.method === "POST") {
-        const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as { account?: string };
+        const body = await jsonBody(req) as unknown as { account?: string };
         return json(res, 200, mailbox.disconnect(String(body.account ?? "") || undefined));
       }
 
@@ -353,6 +380,7 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
       if (req.method === "GET") return await serveStatic(res, path);
       res.writeHead(405); res.end("Method not allowed");
     } catch (err) {
+      if (err instanceof BadRequest) return json(res, 400, { error: err.message });
       logger.error(`Request ${path} failed`, err);
       json(res, 500, { error: err instanceof Error ? err.message : "error" });
     }

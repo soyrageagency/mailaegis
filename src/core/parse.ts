@@ -54,7 +54,20 @@ function parseHeaderBlock(head: string): { headers: Record<string, string>; rece
 /** Decode an RFC-2047 encoded-word run ("=?utf-8?B?…?=" / "=?…?Q?…?="). */
 export function decodeWords(input: string): string {
   if (!input.includes("=?")) return input;
-  return input.replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, (_m, charset: string, enc: string, data: string) => {
+
+  /*
+   * RFC 2047 §6.2: whitespace *between two adjacent encoded-words* is a fold,
+   * not a space, and must be discarded. Encoders break long headers wherever
+   * the 75-column limit falls, so leaving it in inserts a space in the middle
+   * of a word — "Confirmación de la transferencia" arrives as "Confirmaci ón
+   * de la transfer encia" and every rule that matches on the subject misses.
+   *
+   * This has to happen *before* decoding: once each word is replaced by its
+   * text, the `?=` and `=?` markers that identify the join are gone.
+   */
+  const joined = input.replace(/\?=[ \t]*(?:\r?\n[ \t]+)?=\?/g, "?==?");
+
+  return joined.replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, (_m, charset: string, enc: string, data: string) => {
     try {
       const bytes = enc.toUpperCase() === "B"
         ? Buffer.from(data, "base64")
@@ -63,7 +76,7 @@ export function decodeWords(input: string): string {
     } catch {
       return data;
     }
-  }).replace(/\?=\s+=\?/g, "");
+  });
 }
 
 /** Decode bytes using a charset label, falling back to UTF-8. */

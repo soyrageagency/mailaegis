@@ -57,10 +57,9 @@ const EMPTY: ListFile = { blocked: [], allowed: [] };
 export function normaliseEntry(raw: string): string {
   const value = String(raw ?? "").trim().toLowerCase();
   if (!value) return "";
-  if (value.includes("@")) {
-    // `@example.com` is a domain rule; `ana@example.com` is an address rule.
-    return value.startsWith("@") ? value : value;
-  }
+  // `@example.com` is already a domain rule; `ana@example.com` is an address
+  // rule. Either way it is used verbatim — only a bare domain needs the `@`.
+  if (value.includes("@")) return value;
   return `@${value}`;
 }
 
