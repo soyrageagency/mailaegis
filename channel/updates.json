@@ -3,22 +3,26 @@
   "schema": 1,
   "product": "MailAegis",
   "latest": {
-    "version": "1.1.0",
+    "version": "1.2.0",
     "published": "2026-07-22",
     "mandatory": false,
-    "notes": "Multi-account mailboxes, delivery-path tracing and the desktop app.",
+    "notes": "Several mailboxes, compose with outbound scanning, and an Android app.",
     "changelog": [
-      "Several mailboxes at once — connect security@, finance@ and info@ side by side, with a unified inbox.",
-      "Quick-connect presets for Microsoft 365, Google Workspace, Mailcow and friends.",
-      "Delivery-path tracing: every hop, originating IP, rDNS and dwell time.",
-      "Hybrid Analysis (Falcon Sandbox) as a sixth engine, hash-lookup only.",
-      "Signed desktop builds for macOS and Windows."
+      "Several mailboxes at once — security@, finance@ and info@ side by side, with a unified inbox.",
+      "Compose, reply and forward — and everything you send is scanned before it leaves.",
+      "Replying to a flagged message now warns you when its Reply-To points somewhere else.",
+      "Search operators: from:, has:attachment, is:malicious, score>50 — plus saved searches.",
+      "Pin, flag, read/unread, bulk actions, keyboard shortcuts and dark mode.",
+      "One-click presets for Microsoft 365, Google Workspace, Mailcow, Zimbra and more.",
+      "Android app and an installable PWA, so a phone works too.",
+      "Installers that look like software rather than something you should close."
     ],
-    "url": "https://github.com/soyrageagency/mailaegis/releases/tag/v1.1.0",
+    "url": "https://github.com/soyrageagency/mailaegis/releases/tag/v1.2.0",
     "downloads": {
       "win": "https://github.com/soyrageagency/mailaegis/releases/latest",
       "mac-arm64": "https://github.com/soyrageagency/mailaegis/releases/latest",
       "mac-x64": "https://github.com/soyrageagency/mailaegis/releases/latest",
+      "android": "https://github.com/soyrageagency/mailaegis/releases/latest",
       "source": "https://github.com/soyrageagency/mailaegis"
     }
   },

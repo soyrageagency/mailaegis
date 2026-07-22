@@ -1,7 +1,7 @@
 {
   "name": "mailaegis-desktop",
   "productName": "MailAegis",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "MailAegis — Corporate Email Threat Analyzer, as a desktop app. Built by SoyRage Agency.",
   "author": "SoyRage Agency (https://soyrage.es/)",
   "license": "SEE LICENSE IN ../LICENSE",
@@ -23,10 +23,24 @@
     "appId": "es.soyrage.mailaegis",
     "productName": "MailAegis",
     "copyright": "Copyright (c) 2026 SoyRage Agency",
-    "directories": { "output": "release" },
-    "files": ["main.js", "dist/**/*", "package.json"],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "dist/**/*",
+      "package.json"
+    ],
     "mac": {
-      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
       "category": "public.app-category.productivity",
       "icon": "build/icon.png",
       "artifactName": "MailAegis-${version}-mac-${arch}.${ext}"
@@ -34,15 +48,34 @@
     "dmg": {
       "title": "MailAegis ${version}",
       "background": "build/dmg-background.png",
-      "window": { "width": 540, "height": 380 },
+      "window": {
+        "width": 540,
+        "height": 380
+      },
       "iconSize": 110,
       "contents": [
-        { "x": 130, "y": 232, "type": "file" },
-        { "x": 410, "y": 232, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 232,
+          "type": "file"
+        },
+        {
+          "x": 410,
+          "y": 232,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     },
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.ico",
       "artifactName": "MailAegis-${version}-win-${arch}.${ext}"
     },
@@ -65,7 +98,9 @@
       "include": "build/installer.nsh"
     },
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "category": "Network",
       "artifactName": "MailAegis-${version}-linux-${arch}.${ext}"
     }
