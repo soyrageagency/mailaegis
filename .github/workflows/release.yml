@@ -44,7 +44,27 @@ jobs:
           npm run build
 
       - name: Verify the analyzer before packaging
-        run: node scripts/smoke.mjs
+        run: |
+          node scripts/smoke.mjs
+          node scripts/fuzz-check.mjs
+
+      # electron-builder names artefacts from desktop/package.json, so derive
+      # that version from the tag. Otherwise a v1.1.0 release can ship files
+      # called MailAegis-1.0.0-*.
+      - name: Stamp the release version from the tag
+        shell: bash
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "Releasing version $VERSION"
+          node -e "
+            const fs=require('fs');
+            for (const f of ['package.json','desktop/package.json']) {
+              const p=JSON.parse(fs.readFileSync(f,'utf8'));
+              p.version=process.argv[1];
+              fs.writeFileSync(f, JSON.stringify(p,null,2)+'\n');
+            }
+          " "$VERSION"
 
       # Package the Electron shell around it.
       - name: Build the desktop app
