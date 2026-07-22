@@ -59,6 +59,7 @@ an **HTTP API**, or a **Postfix / SMTPS content filter** with proper exit codes.
 - [Sign in without an app password](#-sign-in-without-an-app-password-oauth-20)
 - [How it works](#-how-it-works)
 - [Desktop app (macOS & Windows)](#-desktop-app-macos--windows)
+- [Self-host it with Docker](#-self-host-it-with-docker)
 - [Integrate it](#-integrate-it)
 - [Configuration](#-configuration)
 - [Privacy & safety](#-privacy--safety)
@@ -442,6 +443,48 @@ cd desktop && npm install && npm run dist
 ```
 
 > The apps are **not code-signed** (no paid Apple/Microsoft certificates). macOS: right-click → Open the first time. Windows: "More info" → "Run anyway".
+
+---
+
+## 🐳 Self-host it with Docker
+
+The README has always said "self-hosted" and then left you to arrange it. Now
+it does not:
+
+```bash
+git clone https://github.com/soyrageagency/mailaegis.git && cd mailaegis
+cp .env.example .env          # set your domains and an API token
+docker compose up -d
+```
+
+That gives you MailAegis **and a live ClamAV**, which is the point. Standing up
+`clamd` is the single biggest barrier to real attachment scanning, and it is one
+service away — no VirusTotal key needed for it.
+
+```
+mailaegis   127.0.0.1:4850   the client, the API and the analyzer
+clamav      internal          signature scanning, database persisted
+```
+
+Details worth knowing:
+
+- **It runs unprivileged**, as `node`, and writes nowhere except `/data` — where
+  the audit trail, sender lists and labels live, on a named volume so a restart
+  does not lose them.
+- **The image binds `0.0.0.0`**, because `127.0.0.1` inside a container is
+  unreachable by definition. The published port is bound to loopback on the
+  host; put a reverse proxy in front before you change that, and **set
+  `MAILAEGIS_API_TOKEN`**.
+- **No runtime dependencies ship.** The build stage compiles TypeScript; the
+  final image is Node plus `dist/`.
+- ClamAV's first start downloads ~1 GB of signatures and takes a few minutes.
+  The compose file waits for `clamd` to actually answer `PING`, not merely to
+  have a process, and the database is persisted so it only happens once.
+- Air-gapped? `MAILAEGIS_UPDATE_CHECK=false` and nothing leaves the host.
+
+CI builds the image on every push, starts it, and checks it answers, scores a
+message, runs as a non-root user and reports healthy — so this is verified
+rather than merely written down.
 
 ---
 

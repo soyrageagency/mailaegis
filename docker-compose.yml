@@ -1,0 +1,81 @@
+# MailAegis — self-hosted, with ClamAV alongside it.
+#
+#   cp .env.example .env    # set MAILAEGIS_API_TOKEN and your domains
+#   docker compose up -d
+#   open http://127.0.0.1:4850
+#
+# The reason this file exists: standing up clamd is the single biggest barrier
+# to getting real attachment scanning working, and it is one service away.
+# `docker compose up` gives you MailAegis with a live ClamAV, no VirusTotal key
+# required.
+#
+# Crafted by SoyRage Agency — https://soyrage.es/
+
+services:
+  mailaegis:
+    build: .
+    image: mailaegis:local
+    restart: unless-stopped
+    depends_on:
+      clamav:
+        condition: service_healthy
+    environment:
+      # --- what makes it yours ------------------------------------------
+      # Set these. Without your own domains the impersonation and look-alike
+      # rules have nothing to protect.
+      MAILAEGIS_CORPORATE_DOMAINS: ${MAILAEGIS_CORPORATE_DOMAINS:-}
+      # The container binds 0.0.0.0, so anything that can reach the port can
+      # reach the API. Set a token unless it sits behind an authenticating
+      # proxy.
+      MAILAEGIS_API_TOKEN: ${MAILAEGIS_API_TOKEN:-}
+
+      # --- scanners ------------------------------------------------------
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+      VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
+      HYBRID_ANALYSIS_API_KEY: ${HYBRID_ANALYSIS_API_KEY:-}
+
+      # --- mailbox (optional: the UI can ask instead) --------------------
+      IMAP_HOST: ${IMAP_HOST:-}
+      IMAP_USER: ${IMAP_USER:-}
+      IMAP_PASSWORD: ${IMAP_PASSWORD:-}
+      OAUTH_PROVIDER: ${OAUTH_PROVIDER:-}
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-}
+      OAUTH_REFRESH_TOKEN: ${OAUTH_REFRESH_TOKEN:-}
+      OAUTH_TENANT: ${OAUTH_TENANT:-}
+
+      # --- where decisions are recorded ----------------------------------
+      MAILAEGIS_WEBHOOK_URL: ${MAILAEGIS_WEBHOOK_URL:-}
+      MAILAEGIS_WEBHOOK_TOKEN: ${MAILAEGIS_WEBHOOK_TOKEN:-}
+      # Air-gapped? Set this to false and nothing leaves the host.
+      MAILAEGIS_UPDATE_CHECK: ${MAILAEGIS_UPDATE_CHECK:-true}
+    ports:
+      # Bound to loopback on purpose. Put a reverse proxy in front of it
+      # before changing this to 4850:4850.
+      - "127.0.0.1:4850:4850"
+    volumes:
+      # Reports, the audit trail, sender lists and labels.
+      - mailaegis-data:/data
+
+  clamav:
+    image: clamav/clamav:stable
+    restart: unless-stopped
+    environment:
+      # Keep the signature database current; the daemon reloads on its own.
+      CLAMAV_NO_FRESHCLAMD: "false"
+    volumes:
+      # ~1 GB of signatures. Persisting them turns a five-minute first start
+      # into a few seconds on every restart afterwards.
+      - clamav-db:/var/lib/clamav
+    healthcheck:
+      # clamd answers PING with PONG once the database is actually loaded,
+      # which is what "ready" means here — the process starts long before.
+      test: ["CMD-SHELL", "clamdscan --ping 1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
+
+volumes:
+  mailaegis-data:
+  clamav-db:

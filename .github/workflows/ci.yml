@@ -30,3 +30,58 @@ jobs:
       # backtracks catastrophically on malformed messages.
       - name: Parser robustness probe
         run: node scripts/fuzz-check.mjs
+
+  docker:
+    name: Container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t mailaegis:ci .
+
+      # A Dockerfile that builds is not the same as one that runs. Start it and
+      # talk to it, which also proves the image binds somewhere reachable —
+      # the default 127.0.0.1 would be useless inside a container.
+      - name: Run it and check it answers
+        run: |
+          docker run -d --name mailaegis \
+            -e MAILAEGIS_DEMO=true \
+            -e MAILAEGIS_UPDATE_CHECK=false \
+            -p 4850:4850 mailaegis:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4850/api/meta > meta.json; then break; fi
+            sleep 2
+          done
+          cat meta.json
+          grep -q '"short":"MailAegis"' meta.json
+
+      - name: The analysis pipeline works inside the container
+        run: |
+          curl -fsS -X POST http://127.0.0.1:4850/api/samples/bec-ceo-fraud > verdict.json
+          grep -q '"verdict":"malicious"' verdict.json
+
+      # It must not be running as root, and the data directory must be
+      # writable by the user it does run as — otherwise the audit trail
+      # silently fails to persist.
+      - name: Runs unprivileged and can write its data directory
+        run: |
+          test "$(docker exec mailaegis id -u)" != "0"
+          docker exec mailaegis sh -c 'touch /data/.probe && rm /data/.probe'
+
+      - name: Reports healthy
+        run: |
+          for i in $(seq 1 20); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' mailaegis)
+            echo "health: $status"
+            [ "$status" = "healthy" ] && exit 0
+            sleep 3
+          done
+          docker logs mailaegis
+          exit 1
+
+      - name: Validate the compose file
+        run: docker compose config --quiet
+
+      - if: always()
+        run: docker rm -f mailaegis || true
