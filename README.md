@@ -56,6 +56,7 @@ an **HTTP API**, or a **Postfix / SMTPS content filter** with proper exit codes.
 - [Get it on your phone](#-two-ways-to-get-it-on-your-phone)
 - [What it detects](#-what-it-detects)
 - [The mail client](#-the-mail-client)
+- [Sign in without an app password](#-sign-in-without-an-app-password-oauth-20)
 - [How it works](#-how-it-works)
 - [Desktop app (macOS & Windows)](#-desktop-app-macos--windows)
 - [Integrate it](#-integrate-it)
@@ -320,6 +321,44 @@ deliberate press sends it anyway.
 | 🔄 **Auto-refresh** | Every two minutes, with a cue that tells you whether what arrived is clean or not |
 | 📜 **Audit trail** | Every decision recorded, and forwarded to your SIEM if you want it |
 
+### 🔑 Sign in without an app password (OAuth 2.0)
+
+Microsoft is switching basic authentication off tenant by tenant, and Google
+only accepts an app password when the account has 2-Step Verification. Both are
+workarounds. MailAegis speaks the sanctioned mechanism, **XOAUTH2**, for IMAP
+*and* SMTP.
+
+**Once**, register an application — [Entra ID](https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps)
+or the [Google Cloud console](https://console.cloud.google.com/apis/credentials) —
+with a **desktop / mobile** redirect URI of `http://localhost`. Then:
+
+```bash
+OAUTH_PROVIDER=microsoft OAUTH_CLIENT_ID=<your client id> mailaegis oauth
+```
+
+Your browser opens, you sign in and consent, and MailAegis prints the lines to
+paste into `.env`:
+
+```env
+OAUTH_PROVIDER=microsoft
+OAUTH_CLIENT_ID=…
+OAUTH_TENANT=contoso.onmicrosoft.com    # microsoft only
+OAUTH_REFRESH_TOKEN=…
+IMAP_HOST=outlook.office365.com
+IMAP_USER=security@contoso.com          # no password needed
+```
+
+The flow is the loopback ("installed application") one, with **PKCE** — the
+redirect lands on `127.0.0.1`, which any other local process could also listen
+for on a different port, so a stolen authorization code is worthless without the
+verifier.
+
+The **refresh token is the credential**: keep it as you would a password. It
+never leaves your machine except to the provider's own token endpoint. Access
+tokens live in memory only and are re-fetched a minute before they expire, so a
+token cannot die mid-fetch. If the provider rotates the refresh token, MailAegis
+prints the new one rather than failing silently a month later.
+
 ### Audit trail & SIEM
 
 Every decision worth defending later — a message quarantined, an outbound
@@ -471,6 +510,10 @@ All configuration is environment variables (a local `.env` is loaded automatical
 | `MAILAEGIS_HOST` / `_PORT` | `127.0.0.1` / `4850` | API & UI bind address. |
 | `MAILAEGIS_API_TOKEN` | — | Require a bearer token on the API. |
 | `MAILAEGIS_OUT_DIR` | `./reports` | Where reports and labels are written. |
+| `OAUTH_PROVIDER` | `microsoft` | `microsoft` or `google` — enables XOAUTH2 instead of a password. |
+| `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` | — | From your own app registration. Desktop registrations usually have no secret. |
+| `OAUTH_REFRESH_TOKEN` | — | Printed by `mailaegis oauth`. **This is the credential.** |
+| `OAUTH_TENANT` | `common` | Microsoft only — your directory. |
 | `MAILAEGIS_WEBHOOK_URL` | — | POST every audit event to your SIEM or automation flow (Splunk, Sentinel, Wazuh, n8n). |
 | `MAILAEGIS_WEBHOOK_TOKEN` | — | Sent as `Authorization: Bearer …` with each POST. |
 | `MAILAEGIS_AUDIT_MIN_VERDICT` | `suspicious` | Lowest verdict worth recording: `clean`, `suspicious` or `malicious`. |
@@ -564,10 +607,16 @@ is also why read/pinned state is kept in the browser rather than written back.
 <details>
 <summary><b>Can it connect to Microsoft 365 / Gmail?</b></summary>
 
-Yes, over IMAP. Both reject your normal password, so you need an **app
-password**: Microsoft requires MFA on the account (or an admin to re-enable IMAP
-for the mailbox), Google requires 2-Step Verification. Selecting either preset
-in the UI links the vendor's own instructions.
+Yes, two ways.
+
+**OAuth 2.0 (recommended).** Run `mailaegis oauth`, sign in in your browser, and
+no password is involved at all. This is the only route into a tenant that has
+basic authentication switched off — which Microsoft is doing progressively. See
+[Sign in without an app password](#-sign-in-without-an-app-password-oauth-20).
+
+**App password.** Still works where basic auth is enabled: Microsoft needs MFA on
+the account, Google needs 2-Step Verification. Selecting either preset in the UI
+links the vendor's own instructions.
 </details>
 
 <details>

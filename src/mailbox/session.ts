@@ -349,7 +349,9 @@ export class MailboxSession {
 
     if (!simulated) {
       const result = await sendMail(
-        { ...account.smtp!, user: account.creds!.user, password: account.creds!.password },
+        // The mailbox's own credentials carry the OAuth settings, so
+        // submission authenticates the same way the fetch did.
+        { ...account.smtp!, user: account.creds!.user, password: account.creds!.password, oauth: account.creds!.oauth },
         bareAddress(draft.from),
         recipients,
         raw,

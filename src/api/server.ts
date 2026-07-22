@@ -168,6 +168,17 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
           password: String(body.password ?? "") || config.imapPassword,
           tls: body.tls === undefined ? config.imapTls : Boolean(body.tls),
           mailbox: String(body.mailbox ?? config.imapMailbox),
+          // With OAuth configured the password field is ignored entirely:
+          // XOAUTH2 is the only mechanism a locked-down tenant will accept.
+          oauth: config.oauthClientId && config.oauthRefreshToken
+            ? {
+                provider: config.oauthProvider,
+                clientId: config.oauthClientId,
+                clientSecret: config.oauthClientSecret,
+                refreshToken: config.oauthRefreshToken,
+                tenant: config.oauthTenant,
+              }
+            : undefined,
         };
         if (!creds.host || !creds.user) return json(res, 400, { error: "host and user are required." });
         const limit = Number(body.limit ?? config.imapFetchLimit);

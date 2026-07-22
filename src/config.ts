@@ -90,6 +90,18 @@ export interface AppConfig {
   /** How many of the most recent messages to fetch. */
   readonly imapFetchLimit: number;
 
+  /**
+   * OAuth 2.0 for IMAP and SMTP. With a client id and a refresh token present,
+   * MailAegis authenticates with XOAUTH2 instead of a password — the only way
+   * in to a Microsoft 365 tenant that has basic auth switched off.
+   */
+  readonly oauthProvider: "microsoft" | "google";
+  readonly oauthClientId: string;
+  readonly oauthClientSecret: string;
+  readonly oauthRefreshToken: string;
+  /** Microsoft only: the directory to authenticate against. */
+  readonly oauthTenant: string;
+
   /** Forward audit events to a SIEM or automation endpoint. Empty disables it. */
   readonly webhookUrl: string;
   /** Optional bearer token sent with each webhook POST. */
@@ -157,6 +169,12 @@ export function loadConfig(): AppConfig {
     imapTls: flag("IMAP_TLS", true),
     imapMailbox: str("IMAP_MAILBOX", "INBOX"),
     imapFetchLimit: num("IMAP_FETCH_LIMIT", 25),
+
+    oauthProvider: str("OAUTH_PROVIDER", "microsoft").toLowerCase() === "google" ? "google" : "microsoft",
+    oauthClientId: str("OAUTH_CLIENT_ID"),
+    oauthClientSecret: str("OAUTH_CLIENT_SECRET"),
+    oauthRefreshToken: str("OAUTH_REFRESH_TOKEN"),
+    oauthTenant: str("OAUTH_TENANT", "common"),
 
     webhookUrl: str("MAILAEGIS_WEBHOOK_URL"),
     webhookToken: str("MAILAEGIS_WEBHOOK_TOKEN"),

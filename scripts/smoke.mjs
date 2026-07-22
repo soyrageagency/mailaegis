@@ -504,6 +504,107 @@ await new Promise((r) => setTimeout(r, 150));
   fake.close();
 }
 
+// ---- OAuth 2.0 / XOAUTH2 ----------------------------------------------------
+{
+  const http = await import("node:http");
+  const net = await import("node:net");
+  const { fetchRecent } = await import("../dist/mailbox/imap.js");
+  const { xoauth2, endpointsFor, oauthConfigured, accessToken, authorizeUrl, exchangeCode, resetTokenCache } =
+    await import("../dist/mailbox/oauth.js");
+
+  // The SASL string is fixed and unforgiving: a missing 0x01 produces an
+  // authentication failure indistinguishable from a wrong password.
+  const sasl = Buffer.from(xoauth2("ana@corp.example", "TOKEN"), "base64").toString("utf8");
+  ok("xoauth2: the SASL string has the exact control bytes", sasl === "user=ana@corp.example\x01auth=Bearer TOKEN\x01\x01", JSON.stringify(sasl));
+
+  ok("oauth: microsoft endpoints use the tenant", endpointsFor({ provider: "microsoft", tenant: "contoso.onmicrosoft.com" }).token.includes("contoso.onmicrosoft.com"));
+  ok("oauth: microsoft defaults to the common tenant", endpointsFor({ provider: "microsoft", tenant: "" }).authorize.includes("/common/"));
+  // Without these the flow succeeds and stops working an hour later.
+  ok("oauth: microsoft asks for offline_access", endpointsFor({ provider: "microsoft", tenant: "" }).scopes.includes("offline_access"));
+  ok("oauth: google asks for the mail scope", endpointsFor({ provider: "google" }).scopes.includes("https://mail.google.com/"));
+  ok("oauth: google forces consent so a refresh token is issued",
+    authorizeUrl({ provider: "google", clientId: "cid", tenant: "" }, "http://localhost:1", "chal", "st").includes("access_type=offline"));
+  ok("oauth: PKCE is always sent",
+    authorizeUrl({ provider: "microsoft", clientId: "cid", tenant: "" }, "http://localhost:1", "chal", "st").includes("code_challenge_method=S256"));
+  ok("oauth: not configured without both halves",
+    !oauthConfigured({ clientId: "cid", refreshToken: "" }) && !oauthConfigured({ clientId: "", refreshToken: "r" }) && oauthConfigured({ clientId: "c", refreshToken: "r" }));
+
+  // A fake token endpoint, so the refresh path is exercised without a tenant.
+  let calls = 0;
+  const idp = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", () => {
+      calls++;
+      const form = new URLSearchParams(body);
+      if (form.get("grant_type") === "authorization_code") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ access_token: "AT", refresh_token: "RT-new", expires_in: 3600 }));
+        return;
+      }
+      if (form.get("refresh_token") === "expired") {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid_grant", error_description: "The refresh token has expired." }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ access_token: `AT-${calls}`, expires_in: 3600 }));
+    });
+  });
+  await new Promise((r) => idp.listen(0, "127.0.0.1", r));
+  const tokenUrl = `http://127.0.0.1:${idp.address().port}/token`;
+
+  // endpointsFor is not injectable, so patch the module's view of it by using
+  // a provider whose endpoints we override through the settings we pass.
+  const settings = { provider: "microsoft", clientId: "cid", clientSecret: "", refreshToken: "rt", tenant: "t" };
+  const original = globalThis.fetch;
+  globalThis.fetch = (url, init) => original(String(url).startsWith("https://login.microsoftonline.com") ? tokenUrl : url, init);
+
+  resetTokenCache();
+  const first = await accessToken(settings);
+  const second = await accessToken(settings);
+  ok("oauth: an access token is fetched and then cached", first === "AT-1" && second === "AT-1" && calls === 1, `${first}/${second} calls=${calls}`);
+
+  resetTokenCache();
+  let refreshErr = "";
+  await accessToken({ ...settings, refreshToken: "expired" }).catch((e) => { refreshErr = e.message; });
+  ok("oauth: an expired refresh token says so, in the provider's words", /expired/i.test(refreshErr) && /mailaegis oauth/i.test(refreshErr), refreshErr);
+
+  const exchanged = await exchangeCode(settings, "code", "http://localhost:1", "verifier");
+  ok("oauth: the code exchange returns the refresh token", exchanged.refreshToken === "RT-new");
+
+  // And the whole path: an IMAP server that only speaks XOAUTH2.
+  {
+    let seen = "";
+    const imap = net.createServer((sock) => {
+      sock.write("* OK ready\r\n");
+      sock.on("data", (c) => {
+        const txt = c.toString();
+        const tag = txt.split(" ")[0];
+        const up = txt.toUpperCase();
+        if (up.includes("AUTHENTICATE XOAUTH2")) { seen = txt.trim(); sock.write(`${tag} OK authenticated\r\n`); }
+        else if (up.includes("LOGIN")) { seen = "USED-LOGIN"; sock.write(`${tag} OK\r\n`); }
+        else if (up.includes("SELECT")) sock.write(`* 0 EXISTS\r\n${tag} OK\r\n`);
+        else sock.write(`${tag} OK\r\n`);
+      });
+    });
+    await new Promise((r) => imap.listen(0, "127.0.0.1", r));
+    resetTokenCache();
+    await fetchRecent({
+      host: "127.0.0.1", port: imap.address().port, user: "ana@corp.example",
+      password: "", tls: false, mailbox: "INBOX", oauth: settings,
+    }, 5, 4000);
+    const decoded = Buffer.from((seen.split("XOAUTH2 ")[1] || ""), "base64").toString("utf8");
+    ok("xoauth2: IMAP authenticates with the token, never with LOGIN",
+      seen.includes("AUTHENTICATE XOAUTH2") && decoded.includes("auth=Bearer") && decoded.includes("user=ana@corp.example"),
+      seen.slice(0, 40));
+    imap.close();
+  }
+
+  globalThis.fetch = original;
+  idp.close();
+}
+
 // ---- RFC 2047: folded encoded-words --------------------------------------
 {
   const { decodeWords } = await import("../dist/core/parse.js");

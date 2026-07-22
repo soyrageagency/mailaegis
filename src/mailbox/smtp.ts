@@ -20,6 +20,7 @@
 import { connect as netConnect, type Socket } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import { hostname } from "node:os";
+import { accessToken, oauthConfigured, xoauth2, type OAuthSettings } from "./oauth.js";
 
 /** Where and how to reach the submission server. */
 export interface SmtpCredentials {
@@ -29,6 +30,8 @@ export interface SmtpCredentials {
   password: string;
   /** Implicit TLS (465). False means plain 587 upgraded with STARTTLS. */
   tls: boolean;
+  /** When present, authenticate with SASL XOAUTH2 instead of a password. */
+  oauth?: OAuthSettings;
 }
 
 export interface SmtpResult {
@@ -214,7 +217,13 @@ async function openSession(creds: SmtpCredentials, timeoutMs: number): Promise<S
       ehlo = await session.command(`EHLO ${me}`, [2]);
     }
 
-    if (creds.user) {
+    if (creds.user && creds.oauth && oauthConfigured(creds.oauth)) {
+      // XOAUTH2 first when it is configured: on a tenant with basic auth
+      // disabled it is the only mechanism that will work, and falling back to
+      // PLAIN would just produce a confusing "bad password".
+      const token = await accessToken(creds.oauth);
+      await session.command(`AUTH XOAUTH2 ${xoauth2(creds.user, token)}`, [2], true);
+    } else if (creds.user) {
       if (/AUTH[ =-][^\n]*PLAIN/i.test(ehlo.text)) {
         const token = Buffer.from(`\0${creds.user}\0${creds.password}`, "utf8").toString("base64");
         await session.command(`AUTH PLAIN ${token}`, [2], true);

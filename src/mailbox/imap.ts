@@ -16,6 +16,7 @@
 
 import { connect as netConnect, type Socket } from "node:net";
 import { connect as tlsConnect } from "node:tls";
+import { accessToken, oauthConfigured, xoauth2, type OAuthSettings } from "./oauth.js";
 
 /** Where and how to reach the mailbox. */
 export interface MailboxCredentials {
@@ -26,6 +27,28 @@ export interface MailboxCredentials {
   /** Implicit TLS (port 993). Set false only for localhost testing. */
   tls: boolean;
   mailbox: string;
+  /**
+   * When present, authenticate with SASL XOAUTH2 instead of LOGIN — the only
+   * way in to a Microsoft 365 tenant with basic auth switched off.
+   */
+  oauth?: OAuthSettings;
+}
+
+/**
+ * Authenticate: XOAUTH2 when OAuth is configured, LOGIN otherwise.
+ *
+ * A failed XOAUTH2 exchange gets a continuation (`+`) carrying a base64 JSON
+ * error rather than a plain NO, and the client is expected to send an empty
+ * line to end it. Skipping that leaves the connection wedged, so it is handled
+ * explicitly instead of being left to the timeout.
+ */
+async function authenticate(session: ImapSession, creds: MailboxCredentials): Promise<void> {
+  if (!creds.oauth || !oauthConfigured(creds.oauth)) {
+    await session.command(`LOGIN ${quote(creds.user)} ${quote(creds.password)}`);
+    return;
+  }
+  const token = await accessToken(creds.oauth);
+  await session.command(`AUTHENTICATE XOAUTH2 ${xoauth2(creds.user, token)}`);
 }
 
 /** One fetched message. */
@@ -157,7 +180,7 @@ export async function fetchRecent(
   const session = new ImapSession(socket, timeoutMs);
   try {
     await session.greeting();
-    await session.command(`LOGIN ${quote(creds.user)} ${quote(creds.password)}`);
+    await authenticate(session, creds);
     const selected = await session.command(`SELECT ${quote(creds.mailbox || "INBOX")}`);
 
     const existsLine = selected.find((l) => /^\*\s+\d+\s+EXISTS/i.test(l)) ?? "";
@@ -213,7 +236,7 @@ export async function listMailboxes(creds: MailboxCredentials, timeoutMs = 15000
   const session = new ImapSession(socket, timeoutMs);
   try {
     await session.greeting();
-    await session.command(`LOGIN ${quote(creds.user)} ${quote(creds.password)}`);
+    await authenticate(session, creds);
     const lines = await session.command('LIST "" "*"');
     await session.command("LOGOUT").catch(() => {});
 
@@ -242,7 +265,7 @@ export async function verify(creds: MailboxCredentials, timeoutMs = 15000): Prom
   const session = new ImapSession(socket, timeoutMs);
   try {
     await session.greeting();
-    await session.command(`LOGIN ${quote(creds.user)} ${quote(creds.password)}`);
+    await authenticate(session, creds);
     const selected = await session.command(`SELECT ${quote(creds.mailbox || "INBOX")}`);
     const existsLine = selected.find((l) => /^\*\s+\d+\s+EXISTS/i.test(l)) ?? "";
     await session.command("LOGOUT").catch(() => {});

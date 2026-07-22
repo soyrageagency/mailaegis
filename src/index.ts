@@ -58,6 +58,24 @@ async function main(): Promise<void> {
   if (command === "serve") { const { startServer } = await import("./api/server.js"); await startServer(config, log); return; }
   if (command === "doctor") return doctor(config);
 
+  if (command === "oauth") {
+    const { oauthLogin } = await import("./mailbox/oauth-login.js");
+    try {
+      const { refreshToken } = await oauthLogin(config);
+      say(`\n  ${c.green}✓ Signed in.${c.reset} Add this to your ${c.bold}.env${c.reset} — it is the credential, keep it as you would a password:\n`);
+      say(`  ${c.bold}OAUTH_PROVIDER=${config.oauthProvider}${c.reset}`);
+      say(`  ${c.bold}OAUTH_CLIENT_ID=${config.oauthClientId}${c.reset}`);
+      if (config.oauthProvider === "microsoft") say(`  ${c.bold}OAUTH_TENANT=${config.oauthTenant}${c.reset}`);
+      say(`  ${c.bold}OAUTH_REFRESH_TOKEN=${refreshToken}${c.reset}`);
+      say(`\n  ${c.dim}Then set IMAP_HOST and IMAP_USER as usual — no password is needed.${c.reset}`);
+      say(`  ${c.dim}Check it with:${c.reset} ${c.bold}mailaegis doctor${c.reset}\n`);
+    } catch (err) {
+      say(`\n  ${c.red}✗ ${(err as Error).message}${c.reset}\n`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   if (command === "demo") {
     say(`${c.blue}${c.bold}  ${BRAND.short}${c.reset} ${c.dim}— analysing the built-in corpus${c.reset}\n`);
     let worst = 0;
@@ -129,6 +147,7 @@ function printHelp(): void {
   say("  demo              analyse the built-in corpus of sample corporate messages");
   say("  serve             start the HTTP API + web UI");
   say("  menu              interactive, arrow-key menu (great for first-timers)");
+  say("  oauth             sign in to Microsoft 365 or Google — no app password needed");
   say("  doctor            check the configuration and reach the scanners");
   say("  help              show this help");
   say();
