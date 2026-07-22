@@ -3,21 +3,20 @@
   "schema": 1,
   "product": "MailAegis",
   "latest": {
-    "version": "1.2.0",
+    "version": "1.3.0",
     "published": "2026-07-22",
     "mandatory": false,
-    "notes": "Several mailboxes, compose with outbound scanning, and an Android app.",
+    "notes": "Sender lists, an audit trail your SIEM can read, and undo send.",
     "changelog": [
-      "Several mailboxes at once — security@, finance@ and info@ side by side, with a unified inbox.",
-      "Compose, reply and forward — and everything you send is scanned before it leaves.",
-      "Replying to a flagged message now warns you when its Reply-To points somewhere else.",
-      "Search operators: from:, has:attachment, is:malicious, score>50 — plus saved searches.",
-      "Pin, flag, read/unread, bulk actions, keyboard shortcuts and dark mode.",
-      "One-click presets for Microsoft 365, Google Workspace, Mailcow, Zimbra and more.",
-      "Android app and an installable PWA, so a phone works too.",
-      "Installers that look like software rather than something you should close."
+      "Block or allow senders, by address or by whole domain — and an allow-list entry only counts when the message also proves it really came from them.",
+      "Audit trail of every decision, including the overrides, forwarded to your SIEM if you want it.",
+      "Undo send: six seconds to catch the wrong recipient.",
+      "Raw source viewer and one-click IOC copy, defanged and ready for a ticket.",
+      "A signature per mailbox, autosaved drafts, and auto-refresh that tells you what arrived.",
+      "Several mailboxes at once, compose with outbound scanning, search operators and dark mode.",
+      "Android app and an installable PWA, so a phone works too."
     ],
-    "url": "https://github.com/soyrageagency/mailaegis/releases/tag/v1.2.0",
+    "url": "https://github.com/soyrageagency/mailaegis/releases/tag/v1.3.0",
     "downloads": {
       "win": "https://github.com/soyrageagency/mailaegis/releases/latest",
       "mac-arm64": "https://github.com/soyrageagency/mailaegis/releases/latest",
