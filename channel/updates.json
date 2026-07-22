@@ -3,17 +3,20 @@
   "schema": 1,
   "product": "MailAegis",
   "latest": {
-    "version": "1.3.1",
+    "version": "1.4.0",
     "published": "2026-07-22",
     "mandatory": false,
-    "notes": "Fixes subjects in any language but English being read with a stray space.",
+    "notes": "Sign in to Microsoft 365 and Google without an app password.",
     "changelog": [
-      "Non-English subjects are decoded correctly. Long headers are split by the sender's mail client, and MailAegis was leaving a space at the break — so \"Confirmación de la transferencia\" was read as \"Confirmación de la  transferencia\", and every rule matching on the subject missed. Worth updating if you handle mail in any language but English.",
-      "Malformed API requests now answer 400 instead of 500.",
-      "Auto-refresh works in the \"All mailboxes\" view, which previously never updated.",
-      "1.3.0 also brought: sender allow/block lists, an audit trail and SIEM webhook, undo send, the raw source viewer and defanged IOC export."
+      "OAuth 2.0 for IMAP and SMTP. Run \"mailaegis oauth\", sign in in your browser, and no password is involved — the only way in to a Microsoft tenant with basic authentication switched off, which Microsoft is doing progressively.",
+      "Non-English subjects are decoded correctly. Long headers are split by the sender's client, and MailAegis was leaving a space at the break, so every rule matching on the subject missed.",
+      "Sender allow/block lists — and an allow-list entry only counts when the message also proves it really came from that sender.",
+      "Audit trail of every decision, including the overrides, forwarded to your SIEM if you want it.",
+      "Undo send, the raw source viewer, defanged IOC export, signatures, drafts and auto-refresh.",
+      "Several mailboxes at once, compose with outbound scanning, search operators and dark mode.",
+      "Android app and an installable PWA, so a phone works too."
     ],
-    "url": "https://github.com/soyrageagency/mailaegis/releases/tag/v1.3.1",
+    "url": "https://github.com/soyrageagency/mailaegis/releases/tag/v1.4.0",
     "downloads": {
       "win": "https://github.com/soyrageagency/mailaegis/releases/latest",
       "mac-arm64": "https://github.com/soyrageagency/mailaegis/releases/latest",

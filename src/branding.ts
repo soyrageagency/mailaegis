@@ -18,7 +18,7 @@ export const BRAND = Object.freeze({
   donate: "https://www.paypal.com/paypalme/soyrageagency",
   repo: "https://github.com/soyrageagency/mailaegis",
   tagline: "Every message inspected — attachments, links, headers and intent.",
-  version: "1.3.1",
+  version: "1.4.0",
   accent: "#3b9ee8",
 });
 
