@@ -93,11 +93,14 @@ async function init() {
     if (f) analyseRaw(await f.text());
   });
   $("#disconnect").addEventListener("click", async () => {
-    await api("/api/mailbox/disconnect", { method: "POST" });
+    await api("/api/mailbox/disconnect", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     S.status = null; S.messages = []; S.selected = null;
-    $("#client").classList.add("hidden"); $("#connect").classList.remove("hidden");
+    showConnect();
+    $("#backToClient").classList.add("hidden");
     $("#disconnect").classList.add("hidden"); $("#analyseFile").classList.add("hidden");
   });
+  $("#addAcct").addEventListener("click", () => { $("#form").reset(); showConnect(); });
+  $("#backToClient").addEventListener("click", showClient);
   $("#q").addEventListener("input", () => { S.filter.q = $("#q").value.toLowerCase(); renderList(); });
   $("#newLabel").addEventListener("click", createLabel);
 }
@@ -137,9 +140,15 @@ function showClient() {
   $("#client").classList.remove("hidden");
   $("#disconnect").classList.remove("hidden");
   $("#analyseFile").classList.remove("hidden");
-  $("#acctUser").textContent = S.status.user || "mailbox";
-  $("#acctHost").textContent = S.status.host || "";
   renderRail(); renderList();
+}
+
+/** Back to the connect form without dropping the mailboxes already open. */
+function showConnect() {
+  $("#client").classList.add("hidden");
+  $("#connect").classList.remove("hidden");
+  const some = S.status && (S.status.accounts || []).length > 0;
+  $("#backToClient").classList.toggle("hidden", !some);
 }
 
 async function loadMessages() {
@@ -149,19 +158,74 @@ async function loadMessages() {
 }
 
 // ------------------------------------------------------------------- rail
+/** The mailbox currently in focus, or null when the unified view is showing. */
+function activeAccount() {
+  const st = S.status || {};
+  return (st.accounts || []).find((a) => a.id === st.activeId) || null;
+}
+
+function renderAccounts() {
+  const st = S.status || {};
+  const accounts = st.accounts || [];
+  const unified = accounts.length > 1
+    ? `<button class="arow ${st.activeId === "" ? "active" : ""}" data-account="">
+         ${icon("inbox")}
+         <span class="atext"><span class="alabel">All mailboxes</span>
+         <span class="ahost">${accounts.length} connected</span></span>
+         <span class="n">${accounts.reduce((t, a) => t + a.fetched, 0)}</span>
+       </button>`
+    : "";
+
+  $("#accounts").innerHTML = unified + accounts.map((a) => {
+    const bad = a.counts.malicious + a.counts.suspicious;
+    return `<button class="arow ${a.id === st.activeId ? "active" : ""}" data-account="${esc(a.id)}" title="${esc(a.label)} · ${esc(a.host)}">
+      ${icon("mail")}
+      <span class="atext"><span class="alabel">${esc(a.label)}</span>
+      <span class="ahost">${esc(a.demo ? "demo mailbox" : a.host)} · ${esc(a.mailbox)}</span></span>
+      ${bad ? `<span class="n bad">${bad}</span>` : `<span class="n">${a.fetched}</span>`}
+      <span class="x" data-drop="${esc(a.id)}" title="Disconnect this mailbox">×</span>
+    </button>`;
+  }).join("") || '<div class="empty2">No mailbox connected.</div>';
+
+  $("#accounts").onclick = async (e) => {
+    const drop = e.target.closest("[data-drop]");
+    if (drop) {
+      e.stopPropagation();
+      if (!confirm("Disconnect this mailbox?")) return;
+      S.status = await api("/api/mailbox/disconnect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account: drop.dataset.drop }) });
+      if (!S.status.connected) { S.messages = []; S.selected = null; showConnect(); $("#disconnect").classList.add("hidden"); return; }
+      await loadMessages(); clearRead(); renderRail(); renderList();
+      return;
+    }
+    const b = e.target.closest("[data-account]"); if (!b) return;
+    S.status = await api("/api/mailbox/active", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account: b.dataset.account }) });
+    await loadMessages(); clearRead(); renderRail(); renderList();
+  };
+}
+
+function clearRead() {
+  S.selected = null;
+  $("#read").innerHTML = '<div class="empty muted">Select a message to see its full analysis.</div>';
+}
+
 function renderRail() {
   const st = S.status;
-  $("#folders").innerHTML = (st.folders || []).map((f) => `
-    <button class="frow ${f.name === st.mailbox ? "active" : ""}" data-folder="${esc(f.name)}">
+  renderAccounts();
+
+  // Folders belong to one mailbox, so they only make sense with one in focus.
+  const acct = activeAccount() || ((st.accounts || []).length === 1 ? st.accounts[0] : null);
+  $("#foldersHead").classList.toggle("hidden", !acct);
+  $("#folders").innerHTML = !acct ? "" : (acct.folders || []).map((f) => `
+    <button class="frow ${f.name === acct.mailbox ? "active" : ""}" data-folder="${esc(f.name)}">
       ${icon(FOLDER_ICON[f.role] || "folder")}<span>${esc(f.label)}</span>
-      ${f.name === st.mailbox ? `<span class="n">${st.fetched}</span>` : ""}
+      ${f.name === acct.mailbox ? `<span class="n">${acct.fetched}</span>` : ""}
     </button>`).join("");
   $("#folders").onclick = async (e) => {
-    const b = e.target.closest("[data-folder]"); if (!b) return;
+    const b = e.target.closest("[data-folder]"); if (!b || !acct) return;
     busy(true);
     try {
-      S.status = await api("/api/mailbox/select", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folder: b.dataset.folder }) });
-      await loadMessages(); S.selected = null; $("#read").innerHTML = '<div class="empty muted">Select a message to see its full analysis.</div>';
+      S.status = await api("/api/mailbox/select", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account: acct.id, folder: b.dataset.folder }) });
+      await loadMessages(); clearRead();
       renderRail(); renderList();
     } catch (err) { alert(err.message); } finally { busy(false); }
   };
@@ -226,11 +290,15 @@ function visibleMessages() {
 
 function renderList() {
   const rows = visibleMessages();
+  // In the unified view a row is ambiguous without saying which mailbox it
+  // landed in — that is the whole point of running several.
+  const showAccount = S.status && S.status.activeId === "" && (S.status.accounts || []).length > 1;
   $("#listCount").textContent = `${rows.length}/${S.messages.length}`;
-  $("#list").innerHTML = rows.map((m) => `
-    <button class="mrow ${m.verdict} ${S.selected === m.id ? "active" : ""}" data-id="${esc(m.id)}">
+  $("#list").innerHTML = rows.map((m, i) => `
+    <button class="mrow ${m.verdict} ${S.selected === m.id ? "active" : ""}" data-id="${esc(m.id)}" style="--i:${Math.min(i, 14)}">
       <span class="bar"></span>
       <span class="body">
+        ${showAccount ? `<span class="inbox">${icon("mail")}${esc(m.accountLabel || "")}</span>` : ""}
         <span class="top"><span class="who">${esc(m.from.name || m.from.address)}</span><span class="when">${esc(when(m.date))}</span></span>
         <div class="subj">${esc(m.subject || "(no subject)")}</div>
         <div class="snip">${esc(m.snippet)}</div>
@@ -265,7 +333,7 @@ function analyseRaw(raw) {
     .then((r) => r.json())
     .then((a) => {
       if (a.error) throw new Error(a.error);
-      if (!S.status) { S.status = { connected: true, demo: false, host: "file", user: "single message", mailbox: "File", folders: [], fetched: 1, counts: {}, threatCounts: {} }; showClient(); }
+      if (!S.status) { S.status = { connected: true, accounts: [], activeId: "", fetched: 1, counts: {}, threatCounts: {} }; showClient(); }
       renderRead(a, null);
     })
     .catch((e) => alert("Analysis failed: " + e.message))

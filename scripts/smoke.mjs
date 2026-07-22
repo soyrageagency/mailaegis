@@ -132,7 +132,8 @@ if (up) {
 
   const connected = await post("/api/mailbox/connect", { demo: true });
   ok("mailbox connects to the demo corpus", connected.connected === true && connected.fetched === 5, JSON.stringify(connected).slice(0, 120));
-  ok("mailbox advertises folders incl. Sent", (connected.folders || []).some((f) => f.role === "inbox") && connected.folders.some((f) => f.role === "sent"));
+  const first = (connected.accounts || [])[0] || { folders: [] };
+  ok("mailbox advertises folders incl. Sent", first.folders.some((f) => f.role === "inbox") && first.folders.some((f) => f.role === "sent"));
   ok("mailbox counts verdicts", connected.counts.malicious === 3 && connected.counts.clean === 2, JSON.stringify(connected.counts));
   ok("mailbox derives threat categories", Object.keys(connected.threatCounts || {}).length > 0);
 
@@ -142,8 +143,25 @@ if (up) {
   ok("message rows carry a snippet and counts", listed.messages.every((m) => typeof m.snippet === "string" && typeof m.attachmentCount === "number"));
 
   const sent = await post("/api/mailbox/select", { folder: "Sent" });
-  ok("switching to the Sent folder works", sent.mailbox === "Sent" && sent.fetched >= 1, JSON.stringify(sent).slice(0, 120));
+  ok("switching to the Sent folder works", sent.accounts[0].mailbox === "Sent" && sent.fetched >= 1, JSON.stringify(sent).slice(0, 140));
   await post("/api/mailbox/select", { folder: "INBOX" });
+
+  // ---- Several mailboxes at once -------------------------------------------
+  const two = await post("/api/mailbox/connect", { demo: true });
+  ok("a second mailbox connects alongside the first", two.accounts.length === 2 && two.accounts[1].id !== two.accounts[0].id, JSON.stringify(two.accounts.map((a) => a.id)));
+  ok("each mailbox keeps its own counts", two.accounts[0].fetched === 5 && two.accounts[1].fetched === 3, JSON.stringify(two.accounts.map((a) => a.fetched)));
+
+  const unified = await post("/api/mailbox/active", { account: "" });
+  ok("the unified view spans every mailbox", unified.activeId === "" && unified.fetched === 8, JSON.stringify({ id: unified.activeId, n: unified.fetched }));
+  const unifiedRows = await (await fetch(`${B}/api/mailbox/messages`)).json();
+  ok("unified rows say which mailbox they came from", new Set(unifiedRows.messages.map((m) => m.accountId)).size === 2);
+
+  const focused = await post("/api/mailbox/active", { account: two.accounts[1].id });
+  ok("focusing one mailbox narrows the list", focused.activeId === two.accounts[1].id && focused.fetched === 3);
+
+  const dropped = await post("/api/mailbox/disconnect", { account: two.accounts[1].id });
+  ok("disconnecting one mailbox leaves the others", dropped.connected === true && dropped.accounts.length === 1);
+  await post("/api/mailbox/active", { account: "" });
 
   const made = await post("/api/categories", { name: "Reported to SOC" });
   ok("creates a user label", made.category && made.category.id === "reported-to-soc");
@@ -154,7 +172,12 @@ if (up) {
   ok("deleting a label removes it everywhere", !afterDelete.categories.some((c) => c.id === "reported-to-soc") && afterDelete.messages.every((m) => !(m.labels || []).includes("reported-to-soc")));
 
   const disconnected = await post("/api/mailbox/disconnect");
-  ok("disconnect clears the session", disconnected.ok === true);
+  ok("disconnect clears every mailbox", disconnected.connected === false && disconnected.accounts.length === 0);
+
+  // ---- The update & announcement channel -----------------------------------
+  const channel = await (await fetch(`${B}/api/updates`)).json();
+  ok("the channel reports the running version", typeof channel.current === "string" && channel.current.length > 0, JSON.stringify(channel).slice(0, 140));
+  ok("the channel never advertises an update to itself", channel.update === null || channel.update.version !== channel.current);
 }
 server.kill();
 await new Promise((r) => setTimeout(r, 150));
@@ -198,6 +221,38 @@ await new Promise((r) => setTimeout(r, 150));
   ok("IMAP: lists folders and detects \\Sent", folders.some((f) => f.role === "inbox") && folders.some((f) => f.role === "sent"));
   ok("IMAP: skips \\Noselect folders", !folders.some((f) => f.name === "Skip"));
   fake.close();
+}
+
+// ---- Update channel: the rules that decide whether a user gets nagged -------
+{
+  const { interpretFeed, compareVersions } = await import("../dist/core/updates.js");
+  const now = new Date("2026-07-22T12:00:00Z");
+
+  ok("channel: semver ordering", compareVersions("1.10.0", "1.9.0") > 0 && compareVersions("1.2.0", "1.2.0") === 0);
+  ok("channel: a final release beats its own pre-release", compareVersions("1.2.0", "1.2.0-rc.1") > 0);
+
+  const feed = {
+    latest: { version: "1.2.0", changelog: ["a", "b"], url: "https://example.com/r", downloads: { win: "https://example.com/w.exe" } },
+    announcements: [
+      { id: "always", title: "Always" },
+      { id: "expired", title: "Expired", ends: "2026-01-01" },
+      { id: "future", title: "Future", starts: "2027-01-01" },
+      { id: "newer-only", title: "Newer only", minVersion: "9.0.0" },
+      { id: "no-title" },
+      { id: "bad-link", title: "Bad link", link: { url: "javascript:alert(1)" } },
+    ],
+  };
+  const seen = interpretFeed(feed, "1.1.0", now);
+  ok("channel: offers a newer release", seen.update && seen.update.version === "1.2.0" && seen.update.changelog.length === 2);
+  ok("channel: stays silent when already current", interpretFeed(feed, "1.2.0", now).update === null);
+  ok("channel: stays silent when ahead of the feed", interpretFeed(feed, "1.3.0", now).update === null);
+
+  const ids = seen.announcements.map((a) => a.id);
+  ok("channel: honours date windows", ids.includes("always") && !ids.includes("expired") && !ids.includes("future"), ids.join(","));
+  ok("channel: honours version targeting", !ids.includes("newer-only"));
+  ok("channel: drops entries with no title", !ids.includes("no-title"));
+  ok("channel: refuses non-https links", seen.announcements.find((a) => a.id === "bad-link").link === null);
+  ok("channel: survives a malformed feed", interpretFeed(null, "1.1.0", now).announcements.length === 0);
 }
 
 let pass = 0, fail = 0;

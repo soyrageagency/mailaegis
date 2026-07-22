@@ -59,9 +59,21 @@ code{background:#e9e6dd;padding:1px 6px;border-radius:5px;font-family:var(--mono
 /* ------------------------------------------------------------ mail client */
 .client{flex:1;display:grid;grid-template-columns:232px 384px 1fr;min-height:0;border-top:1px solid var(--line)}
 .rail{border-right:1px solid var(--line);padding:16px 12px;overflow-y:auto;background:rgba(255,255,255,.5)}
-.acct{padding:6px 10px 14px;border-bottom:1px solid var(--line);margin-bottom:12px}
-.acct .who{font-weight:700;font-size:13px;overflow:hidden;text-overflow:ellipsis}
-.acct .host{font-size:11.5px;font-family:var(--mono)}
+/* Mailboxes. A company runs several, so the switcher is the top of the rail. */
+.accounts{display:flex;flex-direction:column;gap:2px}
+.arow{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:none;background:none;
+      padding:7px 9px;border-radius:10px;cursor:pointer;color:var(--ink)}
+.arow .ic{width:16px;height:16px;color:var(--mute);flex:none}
+.arow:hover{background:rgba(17,17,17,.04)}
+.arow.active{background:var(--t-blue)}.arow.active .ic{color:var(--accent)}
+.atext{min-width:0;display:flex;flex-direction:column;line-height:1.25}
+.alabel{font-size:12.8px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ahost{font:400 10.5px var(--mono);color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arow .n{margin-left:auto;font:700 11px var(--mono);color:var(--mute);flex:none}
+.arow .n.bad{background:var(--mal);color:#fff;border-radius:999px;padding:1px 7px}
+.arow .x{flex:none;color:transparent;font-size:14px;line-height:1;padding:0 2px}
+.arow:hover .x{color:var(--mute)}.arow .x:hover{color:var(--mal)}
+.backlink{margin-bottom:18px}
 .railsec{display:flex;align-items:center;justify-content:space-between;font-size:10px;text-transform:uppercase;letter-spacing:.09em;font-weight:700;color:var(--mute);padding:12px 10px 6px}
 .mini{width:20px;height:20px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer;color:var(--mute);font-size:13px;line-height:1}
 .mini:hover{border-color:var(--accent);color:var(--accent)}
@@ -91,6 +103,13 @@ code{background:#e9e6dd;padding:1px 6px;border-radius:5px;font-family:var(--mono
 .mrow .bar{background:var(--clean)}
 .mrow.suspicious .bar{background:var(--susp)}.mrow.malicious .bar{background:var(--mal)}
 .mrow .body{padding:12px 14px;min-width:0}
+/* Which mailbox a row landed in — only rendered in the unified view. */
+.mrow .inbox{display:flex;align-items:center;gap:5px;font:600 10.5px var(--mono);color:var(--mute);margin-bottom:5px}
+.mrow .inbox .ic{width:12px;height:12px}
+/* Rows arrive with a short stagger so a scan feels like it is landing. */
+.mrow{animation:rowin .3s cubic-bezier(.2,.8,.3,1) backwards;animation-delay:calc(var(--i,0) * 22ms)}
+@keyframes rowin{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.mrow{animation:none}}
 .mrow .top{display:flex;align-items:baseline;gap:8px}
 .mrow .who{font-weight:700;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mrow .when{margin-left:auto;font-size:11px;color:var(--mute);white-space:nowrap}
@@ -155,5 +174,89 @@ td{padding:8px;border-bottom:1px solid #f0ede5;vertical-align:top}
 .foot a{color:var(--mute);text-decoration:underline}.foot a:hover{color:var(--ink)}
 .foot .donate{color:var(--ink);font-weight:600}
 
+/* ------------------------------------------------- update & announcements */
+/* A quiet card in the corner. Never modal, never over the message list. */
+.chan{position:fixed;right:20px;bottom:20px;z-index:60;display:flex;flex-direction:column;gap:10px;
+      width:340px;max-width:calc(100vw - 32px);pointer-events:none}
+.chancard{pointer-events:auto;background:var(--panel);border:1px solid var(--line);border-radius:16px;
+          padding:15px 16px 13px;box-shadow:0 14px 40px rgba(17,17,17,.13);
+          opacity:0;transform:translateY(14px) scale(.98);transition:opacity .26s ease,transform .26s cubic-bezier(.2,.8,.3,1)}
+.chancard.in{opacity:1;transform:none}
+.chancard.out{opacity:0;transform:translateY(8px) scale(.98)}
+.chanhead{display:flex;align-items:flex-start;gap:10px}
+.chanic{flex:none;width:26px;height:26px;border-radius:9px;display:grid;place-items:center;
+        background:var(--t-blue);color:var(--ink)}
+.chanic svg{width:15px;height:15px}
+.chantitle{flex:1;font-size:14px;font-weight:700;letter-spacing:-.01em;line-height:1.35;padding-top:3px}
+.chantag{margin-left:7px;font:700 9.5px var(--mono);letter-spacing:.06em;background:var(--ink);color:#fff;
+         border-radius:999px;padding:2px 7px;vertical-align:2px}
+.chanx{flex:none;background:none;border:none;padding:3px;margin:-2px -4px 0 0;cursor:pointer;color:var(--mute);border-radius:7px}
+.chanx svg{width:15px;height:15px;display:block}
+.chanx:hover{color:var(--ink);background:rgba(17,17,17,.06)}
+.chanbody{margin:9px 0 0;font-size:12.8px;line-height:1.5;color:var(--mute)}
+.chancard ul{margin:9px 0 0;padding:0;list-style:none}
+.chancard li{position:relative;padding-left:15px;font-size:12.5px;line-height:1.5;color:var(--mute);margin-bottom:3px}
+.chancard li::before{content:"";position:absolute;left:2px;top:8px;width:4px;height:4px;border-radius:50%;background:var(--accent)}
+.chanfoot{display:flex;align-items:center;gap:8px;margin-top:13px}
+.chanbtn{background:var(--ink);color:#fff;border:none;border-radius:999px;padding:8px 17px;
+         font-size:12.5px;font-weight:600;cursor:pointer;transition:.15s}
+.chanbtn:hover{background:#000;color:#fff}
+.chanlater{background:none;border:none;color:var(--mute);font-size:12.5px;font-weight:600;cursor:pointer;padding:8px 4px}
+.chanlater:hover{color:var(--ink)}
+.lvl-success .chanic{background:var(--t-green)}
+.lvl-warn .chanic{background:var(--t-yellow)}
+.lvl-critical .chanic{background:var(--t-red);color:var(--mal)}
+.lvl-critical{border-color:#e8c9c4}
+@media(prefers-reduced-motion:reduce){.chancard{transition:none}}
+@media(max-width:760px){.chan{right:12px;left:12px;bottom:12px;width:auto}}
+
+/* ------------------------------------------------------------- responsive */
+.only-mobile{display:none}
+.iconbtn{background:none;border:none;padding:6px;border-radius:9px;cursor:pointer;color:var(--ink);display:grid;place-items:center}
+.iconbtn svg{width:22px;height:22px}
+.iconbtn:hover{background:rgba(17,17,17,.05)}
+.backbtn{display:none}
+
 @media(max-width:1180px){.client{grid-template-columns:200px 330px 1fr}}
-@media(max-width:960px){.connectgrid{grid-template-columns:1fr}.client{grid-template-columns:1fr;grid-auto-rows:min-content}.rail{display:none}.listpane{max-height:40vh}}
+@media(max-width:1024px){.client{grid-template-columns:190px 1fr}.readpane{display:none}
+  body.reading .client{grid-template-columns:190px 1fr}
+  body.reading .listpane{display:none}
+  body.reading .readpane{display:block}
+  .backbtn{display:inline-flex}}
+
+/* Phones: one pane at a time, rail as a slide-over drawer. */
+@media(max-width:760px){
+  .only-mobile{display:grid}
+  .band{padding:11px 14px;gap:10px}
+  .title,.sep{display:none}
+  .src{font-size:11px;gap:6px}
+  .src #engines{display:none}
+  .wrap{padding:0 16px}
+  .hero{padding:30px 2px 18px}
+  .hero h1{font-size:25px}
+  .hero p{font-size:14.5px;margin-bottom:22px}
+  .connectgrid{grid-template-columns:1fr;gap:12px}
+  .row.two{grid-template-columns:1fr}
+
+  .client{display:block;border-top:none}
+  .rail{position:fixed;top:0;left:0;bottom:0;width:270px;z-index:30;background:var(--bg);
+        border-right:1px solid var(--line);transform:translateX(-100%);transition:transform .22s ease;
+        box-shadow:0 0 40px rgba(17,17,17,.14);padding-top:20px}
+  body.rail-open .rail{transform:none}
+  body.rail-open::after{content:"";position:fixed;inset:0;background:rgba(17,17,17,.35);z-index:20}
+  .listpane{display:flex;border-right:none;min-height:60vh}
+  .readpane{display:none}
+  body.reading .listpane{display:none}
+  body.reading .readpane{display:block}
+  .listtools{padding:10px 12px}
+  .mrow .body{padding:11px 12px}
+  .rhead{padding:16px 16px 14px}
+  .rbody{padding:14px 16px 32px}
+  .rsubject{font-size:17px}
+  .vscore .n{font-size:24px}
+  .suite-cards{grid-template-columns:1fr}
+  .foot{font-size:12px;padding:24px 16px 34px}
+  table{font-size:12.5px}
+  .find{grid-template-columns:auto 1fr;gap:9px}
+  .find .sc{display:none}
+}

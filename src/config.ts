@@ -90,6 +90,13 @@ export interface AppConfig {
   /** How many of the most recent messages to fetch. */
   readonly imapFetchLimit: number;
 
+  /** Poll the update & announcement channel. False = never any outbound call. */
+  readonly updateCheck: boolean;
+  /** Which feed to poll — re-point it at an intranet copy to address a fleet. */
+  readonly updateFeed: string;
+  /** How long a fetched feed is cached, in minutes. */
+  readonly updateTtlMinutes: number;
+
   /** HTTP API / web UI bind address. */
   readonly host: string;
   readonly port: number;
@@ -143,6 +150,10 @@ export function loadConfig(): AppConfig {
     imapTls: flag("IMAP_TLS", true),
     imapMailbox: str("IMAP_MAILBOX", "INBOX"),
     imapFetchLimit: num("IMAP_FETCH_LIMIT", 25),
+
+    updateCheck: flag("MAILAEGIS_UPDATE_CHECK", true),
+    updateFeed: str("MAILAEGIS_UPDATE_FEED", "https://raw.githubusercontent.com/soyrageagency/mailaegis/main/channel/updates.json"),
+    updateTtlMinutes: num("MAILAEGIS_UPDATE_TTL_MIN", 360),
 
     host: str("MAILAEGIS_HOST", "127.0.0.1"),
     port: num("MAILAEGIS_PORT", 4850),

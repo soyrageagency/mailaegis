@@ -1,0 +1,39 @@
+{
+  "$comment": "MailAegis update & announcement channel. Edit this file, commit it, push it — every running copy of MailAegis picks it up within a few hours. See channel/README.md for the field reference.",
+  "schema": 1,
+  "product": "MailAegis",
+  "latest": {
+    "version": "1.1.0",
+    "published": "2026-07-22",
+    "mandatory": false,
+    "notes": "Multi-account mailboxes, delivery-path tracing and the desktop app.",
+    "changelog": [
+      "Several mailboxes at once — connect security@, finance@ and info@ side by side, with a unified inbox.",
+      "Quick-connect presets for Microsoft 365, Google Workspace, Mailcow and friends.",
+      "Delivery-path tracing: every hop, originating IP, rDNS and dwell time.",
+      "Hybrid Analysis (Falcon Sandbox) as a sixth engine, hash-lookup only.",
+      "Signed desktop builds for macOS and Windows."
+    ],
+    "url": "https://github.com/soyrageagency/mailaegis/releases/tag/v1.1.0",
+    "downloads": {
+      "win": "https://github.com/soyrageagency/mailaegis/releases/latest",
+      "mac-arm64": "https://github.com/soyrageagency/mailaegis/releases/latest",
+      "mac-x64": "https://github.com/soyrageagency/mailaegis/releases/latest",
+      "source": "https://github.com/soyrageagency/mailaegis"
+    }
+  },
+  "announcements": [
+    {
+      "id": "welcome-2026-07",
+      "level": "info",
+      "title": "MailAegis is open source — and free forever.",
+      "body": "If it saves your team from one wire-transfer fraud, a star on GitHub is all we ask.",
+      "link": { "label": "Star the repo", "url": "https://github.com/soyrageagency/mailaegis" },
+      "starts": "",
+      "ends": "",
+      "minVersion": "",
+      "maxVersion": "",
+      "dismissible": true
+    }
+  ]
+}

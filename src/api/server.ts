@@ -27,6 +27,7 @@ import { analyzeRaw } from "../core/analyze.js";
 import { clamEnabled } from "../core/clamav.js";
 import { vtEnabled } from "../core/virustotal.js";
 import { demoMessages } from "../core/demo.js";
+import { readChannel } from "../core/updates.js";
 import { MailboxSession } from "../mailbox/session.js";
 import { CategoryStore, THREAT_META } from "../mailbox/categories.js";
 
@@ -88,6 +89,13 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
         });
       }
 
+      // The update & announcement channel. Proxied through the server so the
+      // browser makes no third-party request, and so an air-gapped deployment
+      // can switch the whole thing off in one place.
+      if (path === "/api/updates" && req.method === "GET") {
+        return json(res, 200, await readChannel(config, url.searchParams.get("force") === "1"));
+      }
+
       if (path === "/api/samples" && req.method === "GET") {
         return json(res, 200, { samples: demoMessages().map(({ id, label, expectation }) => ({ id, label, expectation })) });
       }
@@ -110,7 +118,7 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
         const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as Record<string, unknown>;
         if (body.demo === true || (config.demo && !config.imapHost && !body.host)) {
           logger.info("mailbox: loading the demo corpus");
-          return json(res, 200, await mailbox.connectDemo(config));
+          return json(res, 200, await mailbox.connectDemo(config, String(body.label ?? "")));
         }
         const creds = {
           host: String(body.host ?? config.imapHost),
@@ -131,9 +139,20 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
 
       if (path === "/api/mailbox/select" && req.method === "POST") {
         if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
-        const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as { folder?: string };
-        if (!mailbox.getStatus().connected) return json(res, 409, { error: "Not connected." });
-        return json(res, 200, await mailbox.selectFolder(String(body.folder ?? "INBOX"), config));
+        const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as { folder?: string; account?: string };
+        const status = mailbox.getStatus();
+        if (!status.connected) return json(res, 409, { error: "Not connected." });
+        // Folders belong to an account, so fall back to whichever one is in
+        // focus — and to the only account when the unified view is showing.
+        const account = String(body.account ?? "") || status.activeId || status.accounts[0]!.id;
+        return json(res, 200, await mailbox.selectFolder(account, String(body.folder ?? "INBOX"), config));
+      }
+
+      // Switch the view between one account and the unified inbox ("" = all).
+      if (path === "/api/mailbox/active" && req.method === "POST") {
+        if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
+        const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as { account?: string };
+        return json(res, 200, mailbox.setActive(String(body.account ?? "")));
       }
 
       if (path === "/api/mailbox/messages" && req.method === "GET") {
@@ -180,9 +199,11 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
         return json(res, 200, analysis);
       }
 
+      // No body (or no account) disconnects everything; naming one account
+      // leaves the other mailboxes connected.
       if (path === "/api/mailbox/disconnect" && req.method === "POST") {
-        mailbox.disconnect();
-        return json(res, 200, { ok: true });
+        const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as { account?: string };
+        return json(res, 200, mailbox.disconnect(String(body.account ?? "") || undefined));
       }
 
       if (path === "/api/analyze" && req.method === "POST") {

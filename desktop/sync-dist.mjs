@@ -26,4 +26,9 @@ cpSync(from, to, { recursive: true });
 // guess (and warn) about the module type of every file it loads.
 writeFileSync(join(to, "package.json"), JSON.stringify({ type: "module" }, null, 2) + "\n");
 
+// NSIS shows a licence page, but only recognises the file when it carries a
+// text extension — so mirror the repository LICENSE into the build resources.
+const licence = resolve(here, "..", "LICENSE");
+if (existsSync(licence)) cpSync(licence, join(here, "build", "license.txt"));
+
 console.log(`[sync-dist] copied analyzer → ${to}`);

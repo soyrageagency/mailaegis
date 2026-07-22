@@ -59,7 +59,8 @@
     "smoke": "node scripts/smoke.mjs",
     "fuzz": "node scripts/fuzz-check.mjs",
     "shots": "node scripts/shots.mjs",
-    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "assets": "node scripts/brand-assets.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

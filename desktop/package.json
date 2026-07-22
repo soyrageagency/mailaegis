@@ -28,16 +28,40 @@
     "mac": {
       "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
       "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
       "artifactName": "MailAegis-${version}-mac-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "MailAegis ${version}",
+      "background": "build/dmg-background.png",
+      "window": { "width": 540, "height": 380 },
+      "iconSize": 110,
+      "contents": [
+        { "x": 130, "y": 232, "type": "file" },
+        { "x": 410, "y": 232, "type": "link", "path": "/Applications" }
+      ]
     },
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/icon.ico",
       "artifactName": "MailAegis-${version}-win-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "MailAegis"
+      "shortcutName": "MailAegis",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "menuCategory": "SoyRage Agency",
+      "runAfterFinish": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "installerHeader": "build/installerHeader.bmp",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp",
+      "uninstallDisplayName": "MailAegis — Corporate Email Threat Analyzer"
     },
     "linux": {
       "target": ["AppImage"],

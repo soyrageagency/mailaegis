@@ -1,14 +1,14 @@
 /**
- * The connected-mailbox session.
+ * Connected mailboxes.
  *
- * Holds, in memory only, the folders and messages pulled from a mailbox plus
- * the analysis of each message, so the web UI can behave like a professional
- * mail client: a folder rail, a scannable message list, and a reading pane —
- * with an antivirus verdict on every row.
+ * A company never has one mailbox: there is `security@`, `finance@`, `info@`,
+ * the CEO's, the shared abuse box… so MailAegis holds **many accounts at once**
+ * and can show them individually or as one unified inbox, with the antivirus
+ * verdict on every row.
  *
- * The credentials live in this process for as long as you stay connected
- * (switching folders needs to re-authenticate) and are never written to disk,
- * never logged, and never returned by the API.
+ * Everything lives in memory. Credentials stay in this process for as long as
+ * an account is connected (switching folders re-authenticates) and are never
+ * written to disk, never logged and never returned by the API.
  *
  * Part of MailAegis — Corporate Email Threat Analyzer.
  * Crafted by SoyRage Agency — https://soyrage.es/
@@ -26,6 +26,8 @@ import { fetchRecent, listMailboxes, type MailboxCredentials, type MailboxFolder
 /** A row in the message list. */
 export interface InboxItem {
   id: string;
+  accountId: string;
+  accountLabel: string;
   seq: number;
   from: { name: string; address: string };
   to: string;
@@ -37,21 +39,29 @@ export interface InboxItem {
   attachmentCount: number;
   urlCount: number;
   findingCount: number;
-  /** Automatic threat classes, strongest first. */
   threat: ThreatCategory[];
-  /** User label ids assigned to this message. */
   labels: string[];
 }
 
-/** What the UI needs to render the chrome. */
-export interface MailboxStatus {
-  connected: boolean;
-  demo: boolean;
+/** A connected mailbox, as the UI sees it (never includes credentials). */
+export interface AccountView {
+  id: string;
+  label: string;
   host: string;
-  user: string;
   mailbox: string;
+  demo: boolean;
   folders: MailboxFolder[];
   total: number;
+  fetched: number;
+  counts: Record<Verdict, number>;
+}
+
+/** Everything the chrome needs. */
+export interface MailboxStatus {
+  connected: boolean;
+  accounts: AccountView[];
+  /** "" means the unified view across every account. */
+  activeId: string;
   fetched: number;
   counts: Record<Verdict, number>;
   threatCounts: Record<string, number>;
@@ -59,7 +69,13 @@ export interface MailboxStatus {
 
 interface Entry { item: InboxItem; analysis: Analysis }
 
-/** Demo folders, so the mail-client chrome is complete without a server. */
+interface Account {
+  view: AccountView;
+  creds: MailboxCredentials | null;
+  limit: number;
+  entries: Entry[];
+}
+
 const DEMO_FOLDERS: MailboxFolder[] = [
   { name: "INBOX", label: "Inbox", role: "inbox" },
   { name: "Sent", label: "Sent", role: "sent" },
@@ -69,14 +85,10 @@ const DEMO_FOLDERS: MailboxFolder[] = [
   { name: "Trash", label: "Trash", role: "trash" },
 ];
 
-function emptyStatus(): MailboxStatus {
-  return {
-    connected: false, demo: false, host: "", user: "", mailbox: "", folders: [],
-    total: 0, fetched: 0,
-    counts: { clean: 0, suspicious: 0, malicious: 0 },
-    threatCounts: {},
-  };
-}
+/** The mailboxes a mid-sized company actually runs, for the demo. */
+const DEMO_PERSONAS = ["security@corp.example", "finance@corp.example", "info@corp.example"];
+
+const zero = (): Record<Verdict, number> => ({ clean: 0, suspicious: 0, malicious: 0 });
 
 /** Strip a body down to a short preview line. */
 function snippetOf(text: string, html: string): string {
@@ -84,86 +96,170 @@ function snippetOf(text: string, html: string): string {
   return source.replace(/\s+/g, " ").trim().slice(0, 160);
 }
 
-/** One process-wide mailbox session (the API is single-tenant by design). */
+/**
+ * A stable id for an account. IMAP usernames are usually the address already,
+ * so only fall back to `user@host` when the username is a bare login.
+ */
+function accountId(user: string, host: string): string {
+  const raw = user.includes("@") ? user : `${user}@${host}`;
+  return raw.toLowerCase().replace(/[^a-z0-9@._-]/g, "-");
+}
+
+/** Most dangerous first, then newest — what a security inbox should show. */
+const RANK: Record<Verdict, number> = { malicious: 0, suspicious: 1, clean: 2 };
+function sortItems(entries: Entry[]): Entry[] {
+  return [...entries].sort((a, b) => RANK[a.item.verdict] - RANK[b.item.verdict] || b.item.seq - a.item.seq);
+}
+
+/** All the mailboxes this process currently has open. */
 export class MailboxSession {
-  private entries: Entry[] = [];
-  private status: MailboxStatus = emptyStatus();
-  /** Kept only while connected, so folders can be switched. Never persisted. */
-  private creds: MailboxCredentials | null = null;
-  private limit = 25;
+  private accounts = new Map<string, Account>();
+  private activeId = "";
 
   constructor(private readonly categories: CategoryStore) {}
 
-  getStatus(): MailboxStatus { return this.status; }
-  list(): InboxItem[] { return this.entries.map((e) => e.item); }
-  get(id: string): Analysis | undefined { return this.entries.find((e) => e.item.id === id)?.analysis; }
+  // ---- Reads --------------------------------------------------------------
 
-  disconnect(): void {
-    this.entries = [];
-    this.status = emptyStatus();
-    this.creds = null;
+  getStatus(): MailboxStatus {
+    const views = [...this.accounts.values()].map((a) => a.view);
+    const items = this.list();
+    const counts = zero();
+    const threatCounts: Record<string, number> = {};
+    for (const e of this.entriesFor(this.activeId)) {
+      counts[e.item.verdict]++;
+      for (const t of e.item.threat) threatCounts[t] = (threatCounts[t] ?? 0) + 1;
+    }
+    return {
+      connected: this.accounts.size > 0,
+      accounts: views,
+      activeId: this.activeId,
+      fetched: items.length,
+      counts,
+      threatCounts,
+    };
   }
 
-  /** Re-read the labels for every loaded message (after an assignment). */
+  /** Entries for one account, or every account when id is "". */
+  private entriesFor(id: string): Entry[] {
+    if (!id) return sortItems([...this.accounts.values()].flatMap((a) => a.entries));
+    return this.accounts.get(id)?.entries ?? [];
+  }
+
+  list(): InboxItem[] {
+    return this.entriesFor(this.activeId).map((e) => e.item);
+  }
+
+  get(messageId: string): Analysis | undefined {
+    for (const account of this.accounts.values()) {
+      const hit = account.entries.find((e) => e.item.id === messageId);
+      if (hit) return hit.analysis;
+    }
+    return undefined;
+  }
+
+  /** Switch the view to one account, or "" for the unified inbox. */
+  setActive(id: string): MailboxStatus {
+    this.activeId = id && this.accounts.has(id) ? id : "";
+    return this.getStatus();
+  }
+
   refreshLabels(): void {
-    for (const e of this.entries) e.item.labels = this.categories.for(e.item.id);
+    for (const account of this.accounts.values()) {
+      for (const e of account.entries) e.item.labels = this.categories.for(e.item.id);
+    }
   }
 
-  /** Load the built-in corpus as if it were a mailbox. */
-  async connectDemo(config: AppConfig, folder = "INBOX"): Promise<MailboxStatus> {
+  // ---- Connecting ---------------------------------------------------------
+
+  /**
+   * Add the built-in corpus as a demo account. Called repeatedly it walks the
+   * persona list, so clicking "open the demo mailbox" twice gives you two
+   * different mailboxes to switch between rather than reloading the same one.
+   */
+  async connectDemo(config: AppConfig, label = "", folder = "INBOX"): Promise<MailboxStatus> {
+    if (!label) label = DEMO_PERSONAS.find((p) => !this.accounts.has(accountId(p, "demo.mailbox"))) ?? DEMO_PERSONAS[0]!;
+    const id = accountId(label, "demo.mailbox");
     const samples = demoMessages();
-    // "Sent" shows only the messages our own company would have sent.
-    const chosen = folder.toLowerCase() === "sent" ? samples.filter((s) => s.id === "clean-invoice") : samples;
-    const raws = chosen.map((s, i) => ({ seq: chosen.length - i, raw: Buffer.from(s.raw, "utf8") }));
-    this.creds = null;
-    this.status = { ...emptyStatus(), connected: true, demo: true, host: "demo.mailbox", user: "security@corp.example", mailbox: folder, folders: DEMO_FOLDERS, total: chosen.length };
-    await this.ingest(raws, config);
-    return this.status;
+    // Later personas see a different slice, so the unified inbox and the
+    // per-account counts are visibly different.
+    const isSecond = DEMO_PERSONAS.indexOf(label) > 0;
+    const chosen = folder.toLowerCase() === "sent"
+      ? samples.filter((s) => s.id === "clean-invoice")
+      : isSecond
+        ? samples.filter((s) => ["clean-invoice", "bec-ceo-fraud", "newsletter"].includes(s.id))
+        : samples;
+
+    const account: Account = {
+      view: { id, label, host: "demo.mailbox", mailbox: folder, demo: true, folders: DEMO_FOLDERS, total: chosen.length, fetched: 0, counts: zero() },
+      creds: null, limit: chosen.length, entries: [],
+    };
+    this.accounts.set(id, account);
+    await this.ingest(account, chosen.map((s, i) => ({ seq: chosen.length - i, raw: Buffer.from(s.raw, "utf8") })), config);
+    this.activeId = id;
+    return this.getStatus();
   }
 
-  /** Connect to a real mailbox: enumerate folders, fetch and analyse. */
+  /** Connect a real mailbox and add it as an account. */
   async connect(creds: MailboxCredentials, config: AppConfig, limit: number): Promise<MailboxStatus> {
     const folders = await listMailboxes(creds);
     const { total, messages } = await fetchRecent(creds, limit);
-    this.creds = creds;
-    this.limit = limit;
-    this.status = {
-      ...emptyStatus(), connected: true, demo: config.demo,
-      host: creds.host, user: creds.user, mailbox: creds.mailbox || "INBOX",
-      folders: folders.length ? folders : [{ name: creds.mailbox || "INBOX", label: creds.mailbox || "Inbox", role: "inbox" }],
-      total,
+    const id = accountId(creds.user, creds.host);
+    const account: Account = {
+      view: {
+        id, label: creds.user, host: creds.host, mailbox: creds.mailbox || "INBOX", demo: false,
+        folders: folders.length ? folders : [{ name: creds.mailbox || "INBOX", label: creds.mailbox || "Inbox", role: "inbox" }],
+        total, fetched: 0, counts: zero(),
+      },
+      creds, limit, entries: [],
     };
-    await this.ingest(messages, config);
-    return this.status;
+    this.accounts.set(id, account);
+    await this.ingest(account, messages, config);
+    this.activeId = id;
+    return this.getStatus();
   }
 
-  /** Switch to another folder using the credentials already in the session. */
-  async selectFolder(name: string, config: AppConfig): Promise<MailboxStatus> {
-    if (this.status.demo || !this.creds) return this.connectDemo(config, name);
-    const creds = { ...this.creds, mailbox: name };
-    const { total, messages } = await fetchRecent(creds, this.limit);
-    this.creds = creds;
-    this.status = { ...this.status, mailbox: name, total, counts: { clean: 0, suspicious: 0, malicious: 0 }, threatCounts: {} };
-    await this.ingest(messages, config);
-    return this.status;
+  /** Switch folder within one account. */
+  async selectFolder(id: string, folder: string, config: AppConfig): Promise<MailboxStatus> {
+    const account = this.accounts.get(id);
+    if (!account) throw new Error("Unknown account.");
+    if (account.view.demo || !account.creds) {
+      await this.connectDemo(config, account.view.label, folder);
+      return this.getStatus();
+    }
+    const creds = { ...account.creds, mailbox: folder };
+    const { total, messages } = await fetchRecent(creds, account.limit);
+    account.creds = creds;
+    account.view = { ...account.view, mailbox: folder, total };
+    await this.ingest(account, messages, config);
+    this.activeId = id;
+    return this.getStatus();
   }
 
-  /** Analyse a batch of raw messages and build the list. */
-  private async ingest(messages: Array<{ seq: number; raw: Buffer }>, config: AppConfig): Promise<void> {
+  /** Remove one account, or every account when no id is given. */
+  disconnect(id?: string): MailboxStatus {
+    if (id) this.accounts.delete(id);
+    else this.accounts.clear();
+    if (!this.accounts.has(this.activeId)) this.activeId = "";
+    return this.getStatus();
+  }
+
+  // ---- Analysis -----------------------------------------------------------
+
+  private async ingest(account: Account, messages: Array<{ seq: number; raw: Buffer }>, config: AppConfig): Promise<void> {
     const entries: Entry[] = [];
-    const counts: Record<Verdict, number> = { clean: 0, suspicious: 0, malicious: 0 };
-    const threatCounts: Record<string, number> = {};
+    const counts = zero();
 
     for (const m of messages) {
       const parsed = parseMessage(m.raw);
       const analysis = await analyzeRaw(m.raw, config);
       const threat = deriveCategories(analysis);
       counts[analysis.verdict]++;
-      for (const t of threat) threatCounts[t] = (threatCounts[t] ?? 0) + 1;
       entries.push({
         analysis,
         item: {
           id: analysis.id,
+          accountId: account.view.id,
+          accountLabel: account.view.label,
           seq: m.seq,
           from: { name: parsed.from.name, address: parsed.from.address },
           to: parsed.to.map((t) => t.address).join(", "),
@@ -181,10 +277,7 @@ export class MailboxSession {
       });
     }
 
-    // Most dangerous first, then newest — what a security inbox should show.
-    const rank: Record<Verdict, number> = { malicious: 0, suspicious: 1, clean: 2 };
-    entries.sort((a, b) => rank[a.item.verdict] - rank[b.item.verdict] || b.item.seq - a.item.seq);
-    this.entries = entries;
-    this.status = { ...this.status, fetched: entries.length, counts, threatCounts };
+    account.entries = sortItems(entries);
+    account.view = { ...account.view, fetched: entries.length, counts };
   }
 }

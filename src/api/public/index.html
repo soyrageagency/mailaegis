@@ -9,10 +9,18 @@
       Crafted by SoyRage Agency — https://soyrage.es/
       Attribution must remain intact (see LICENSE).
     -->
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="icon-180.png" />
+    <meta name="theme-color" content="#f3f1ea" />
+    <meta name="description" content="MailAegis inspects every corporate message — attachments, links, headers and intent — with VirusTotal, ClamAV, SPF/DKIM/DMARC and its own phishing/BEC engine." />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header class="band">
+      <button id="menu" class="iconbtn only-mobile hidden" aria-label="Folders">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
       <div class="brand">
         <span class="mark"><svg viewBox="0 0 120 120" fill="currentColor" aria-label="SoyRage Agency"><path fill-rule="evenodd" clip-rule="evenodd" d="M20 12 H68 L92 32 V54 L72 69 L101 108 H73 L51 74 H42 V108 H20 Z M42 32 V56 H64 L74 48 V40 L64 32 Z"/><path d="M78 6 H106 L86 28 Z"/></svg></span>
         <span class="logo">Mail<span class="accent">Aegis</span></span>
@@ -30,6 +38,7 @@
     <!-- ============================ CONNECT ============================ -->
     <main id="connect" class="wrap">
       <section class="hero">
+        <button id="backToClient" class="ghost sm hidden backlink">&larr; Back to my mailboxes</button>
         <h1>Your inbox, with an <span class="accent">antivirus layer</span>.</h1>
         <p>Connect your corporate mailbox over IMAP and MailAegis reads it like a mail client — folders, senders, subjects — while scoring every message: SPF/DKIM/DMARC, <b>VirusTotal</b> reputation, <b>ClamAV</b> content scanning and its own phishing/BEC heuristics.</p>
 
@@ -73,9 +82,10 @@
     <!-- ========================== MAIL CLIENT ========================== -->
     <div id="client" class="client hidden">
       <aside class="rail">
-        <div class="acct"><div class="who" id="acctUser">—</div><div class="host muted" id="acctHost">—</div></div>
+        <div class="railsec">Mailboxes <button id="addAcct" class="mini" title="Connect another mailbox">+</button></div>
+        <nav id="accounts" class="accounts"></nav>
 
-        <div class="railsec">Folders</div>
+        <div class="railsec" id="foldersHead">Folders</div>
         <nav id="folders" class="folders"></nav>
 
         <div class="railsec">Threats</div>
@@ -108,5 +118,6 @@
     </footer>
 
     <script src="app.js"></script>
+    <script src="channel.js"></script>
   </body>
 </html>

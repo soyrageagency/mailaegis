@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="MailAegis">
+  <!--
+    MailAegis favicon — the SoyRage angular "R" knocked out of an ink tile,
+    with the signature shard in the brand blue. Reads as a solid dark mark at
+    16px and keeps its detail on a retina tab strip.
+    Crafted by SoyRage Agency — https://soyrage.es/
+  -->
+  <rect width="160" height="160" rx="36" fill="#111111"/>
+  <g transform="translate(20 20) scale(1)">
+    <path fill="#f3f1ea" fill-rule="evenodd" clip-rule="evenodd"
+          d="M20 12 H68 L92 32 V54 L72 69 L101 108 H73 L51 74 H42 V108 H20 Z
+             M42 32 V56 H64 L74 48 V40 L64 32 Z"/>
+    <path fill="#3b9ee8" d="M78 6 H106 L86 28 Z"/>
+  </g>
+</svg>
