@@ -232,6 +232,112 @@ await new Promise((r) => setTimeout(r, 150));
   fake.close();
 }
 
+// ---- Composing outbound mail ------------------------------------------------
+{
+  const { buildMime, quotedPrintable, encodeWord, formatAddress, envelopeRecipients, replySubject, forwardSubject, sanitiseHeaderValue } =
+    await import("../dist/mailbox/compose.js");
+
+  const draft = (over = {}) => ({
+    from: "Ana López <ana@corp.example>", to: ["bob@partner.example"], cc: [], bcc: [],
+    subject: "Hello", text: "Hi there", html: "", attachments: [], date: new Date("2026-07-22T10:00:00Z"), ...over,
+  });
+
+  const plain = buildMime(draft()).toString("utf8");
+  ok("compose: a plain note is not wrapped in a pointless multipart", !/multipart/.test(plain) && /Content-Type: text\/plain/.test(plain));
+  ok("compose: encodes a non-ASCII display name", /=\?UTF-8\?B\?/.test(formatAddress("Ana López <ana@corp.example>")));
+  ok("compose: leaves plain ASCII alone", formatAddress("Bob <bob@x.example>") === '"Bob" <bob@x.example>' && encodeWord("Hello") === "Hello");
+
+  // Header injection: the oldest trick there is.
+  const injected = buildMime(draft({ subject: "Payroll\r\nBcc: rival@other.example" })).toString("utf8");
+  ok("compose: a newline in the subject cannot invent a header", !/^Bcc:/m.test(injected) && /Payroll Bcc: rival/.test(injected));
+  ok("compose: sanitiser folds CR and LF away", sanitiseHeaderValue("a\r\nb\nc") === "a b c");
+
+  // Bcc belongs in the envelope, never in the message.
+  const blind = draft({ bcc: ["secret@corp.example"], cc: ["cc@corp.example"] });
+  const withBcc = buildMime(blind).toString("utf8");
+  ok("compose: Bcc never reaches the headers", !/Bcc:/i.test(withBcc) && /Cc: /.test(withBcc));
+  ok("compose: Bcc still reaches the envelope", envelopeRecipients(blind).includes("secret@corp.example"));
+  ok("compose: the envelope deduplicates recipients", envelopeRecipients(draft({ to: ["a@x.example"], cc: ["A@X.example"] })).length === 1);
+
+  // Quoted-printable is where non-ASCII bodies go wrong.
+  ok("compose: encodes non-ASCII bodies", quotedPrintable("café") === "caf=C3=A9");
+  ok("compose: encodes trailing whitespace so relays cannot strip it", quotedPrintable("hi \nthere").startsWith("hi=20"));
+  ok("compose: escapes the equals sign itself", quotedPrintable("a=b") === "a=3Db");
+  ok("compose: wraps at the 76-column limit", quotedPrintable("x".repeat(200)).split("\r\n").every((l) => l.length <= 76));
+
+  const withFile = buildMime(draft({ attachments: [{ filename: "informe año.pdf", contentType: "application/pdf", content: Buffer.from("PDFDATA") }] })).toString("utf8");
+  ok("compose: attachments become base64 parts", /multipart\/mixed/.test(withFile) && /Content-Transfer-Encoding: base64/.test(withFile) && withFile.includes(Buffer.from("PDFDATA").toString("base64")));
+  ok("compose: non-ASCII filenames use RFC 2231, not an encoded-word", /filename\*=UTF-8''/.test(withFile) && !/filename="=\?/.test(withFile));
+
+  const both = buildMime(draft({ html: "<p>Hi</p>" })).toString("utf8");
+  ok("compose: text and HTML become multipart/alternative", /multipart\/alternative/.test(both) && /text\/plain/.test(both) && /text\/html/.test(both));
+
+  ok("compose: Re: and Fwd: do not stack", replySubject("Re: Hi") === "Re: Hi" && replySubject("Hi") === "Re: Hi" && forwardSubject("Fwd: Hi") === "Fwd: Hi");
+
+  // The composed message must be readable by our own parser.
+  const { parseMessage } = await import("../dist/core/parse.js");
+  const round = parseMessage(buildMime(draft({ subject: "Año nuevo", text: "Hola señor" })));
+  ok("compose: our parser reads back what we wrote", round.subject === "Año nuevo" && round.text.includes("Hola señor") && round.from.address === "ana@corp.example");
+}
+
+// ---- SMTP against a fake submission server ----------------------------------
+{
+  const net = await import("node:net");
+  const { sendMail, dotStuff } = await import("../dist/mailbox/smtp.js");
+
+  ok("smtp: dot-stuffs a line that would end DATA", dotStuff(Buffer.from(".hidden\r\nok\r\n")).toString() === "..hidden\r\nok\r\n");
+
+  let seen = { auth: "", from: "", rcpt: [], data: "", wire: "" };
+  const fake = net.createServer((sock) => {
+    let mode = "cmd", body = "", stage = 0;
+    // A deliberately multi-line greeting and EHLO: the reply reader has to
+    // wait for the line whose fourth character is a space.
+    sock.write("220-mail.corp.example ESMTP\r\n220 ready\r\n");
+    sock.on("data", (chunk) => {
+      for (const line of chunk.toString().split("\r\n")) {
+        if (line === "" && mode === "cmd") continue;
+        if (mode === "data") {
+          if (line === ".") { seen.data = body; mode = "cmd"; sock.write("250 2.0.0 Ok: queued as ABC123\r\n"); }
+          // A real server removes the stuffing dot, which is what makes the
+          // round trip lossless — so this one does too.
+          else { seen.wire += line + "\r\n"; body += line.replace(/^\.\./, ".") + "\r\n"; }
+          continue;
+        }
+        const up = line.toUpperCase();
+        if (up.startsWith("EHLO")) sock.write("250-mail.corp.example\r\n250-PIPELINING\r\n250-AUTH LOGIN\r\n250 SIZE 35882577\r\n");
+        else if (up === "AUTH LOGIN") { stage = 1; sock.write("334 VXNlcm5hbWU6\r\n"); }
+        else if (stage === 1) { seen.auth = Buffer.from(line, "base64").toString(); stage = 2; sock.write("334 UGFzc3dvcmQ6\r\n"); }
+        else if (stage === 2) { stage = 0; sock.write("235 2.7.0 Authentication successful\r\n"); }
+        else if (up.startsWith("MAIL FROM")) { seen.from = line; sock.write("250 2.1.0 Ok\r\n"); }
+        else if (up.startsWith("RCPT TO")) {
+          const address = /<([^>]*)>/.exec(line)?.[1] ?? "";
+          seen.rcpt.push(address);
+          // One address is refused, to prove a partial send is reported.
+          if (address === "nope@partner.example") sock.write("550 5.1.1 No such user\r\n");
+          else sock.write("250 2.1.5 Ok\r\n");
+        } else if (up === "DATA") { mode = "data"; sock.write("354 End data with <CR><LF>.<CR><LF>\r\n"); }
+        else if (up === "QUIT") sock.write("221 2.0.0 Bye\r\n");
+        else if (line) sock.write("500 5.5.1 Unknown\r\n");
+      }
+    });
+  });
+  await new Promise((r) => fake.listen(0, "127.0.0.1", r));
+  const creds = { host: "127.0.0.1", port: fake.address().port, user: "ana@corp.example", password: "s3cret", tls: false };
+
+  const raw = Buffer.from("Subject: Test\r\n\r\nbody line\r\n.dotted line\r\n");
+  const result = await sendMail(creds, "ana@corp.example", ["bob@partner.example", "nope@partner.example"], raw);
+  ok("smtp: authenticates with AUTH LOGIN", seen.auth === "ana@corp.example");
+  ok("smtp: survives multi-line greetings and EHLO", seen.from === "MAIL FROM:<ana@corp.example>");
+  ok("smtp: reports a partial send rather than failing", result.accepted.length === 1 && result.rejected.length === 1 && /550/.test(result.rejected[0].reply));
+  ok("smtp: the body arrives un-truncated and un-stuffed", seen.data.includes("body line") && seen.data.includes(".dotted line") && !seen.data.includes("..dotted"));
+  ok("smtp: returns the queue id the server gave", /ABC123/.test(result.response));
+
+  let threw = "";
+  await sendMail(creds, "ana@corp.example", ["nope@partner.example"], raw).catch((e) => { threw = e.message; });
+  ok("smtp: every recipient refused is an error", /Every recipient was refused/.test(threw), threw);
+  fake.close();
+}
+
 // ---- Update channel: the rules that decide whether a user gets nagged -------
 {
   const { interpretFeed, compareVersions } = await import("../dist/core/updates.js");

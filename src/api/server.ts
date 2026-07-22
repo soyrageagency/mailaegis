@@ -138,8 +138,11 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
         };
         if (!creds.host || !creds.user) return json(res, 400, { error: "host and user are required." });
         const limit = Number(body.limit ?? config.imapFetchLimit);
+        const smtp = body.smtpHost
+          ? { host: String(body.smtpHost), port: Number(body.smtpPort ?? 465), tls: body.smtpTls === undefined ? true : Boolean(body.smtpTls) }
+          : undefined;
         logger.info(`mailbox: connecting to ${creds.host} as ${creds.user}`);
-        const status = await mailbox.connect(creds, config, limit);
+        const status = await mailbox.connect(creds, config, limit, smtp);
         return json(res, 200, status);
       }
 
@@ -203,6 +206,50 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
         const analysis = mailbox.get(id);
         if (!analysis) return json(res, 404, { error: "Unknown message." });
         return json(res, 200, analysis);
+      }
+
+      // Send — and scan on the way out. A tool that inspects what arrives but
+      // not what leaves is only watching half the door.
+      if (path === "/api/mailbox/send" && req.method === "POST") {
+        if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
+        const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as Record<string, unknown>;
+        const status = mailbox.getStatus();
+        if (!status.connected) return json(res, 409, { error: "Connect a mailbox first." });
+        const account = String(body.account ?? "") || status.activeId || status.accounts[0]!.id;
+
+        const list = (v: unknown): string[] =>
+          (Array.isArray(v) ? v : String(v ?? "").split(","))
+            .map((x) => String(x).trim()).filter(Boolean);
+
+        const attachments = (Array.isArray(body.attachments) ? body.attachments : []).slice(0, 20).map((a) => {
+          const item = a as Record<string, unknown>;
+          return {
+            filename: String(item.filename ?? "attachment"),
+            contentType: String(item.contentType ?? "application/octet-stream"),
+            content: Buffer.from(String(item.base64 ?? ""), "base64"),
+          };
+        });
+
+        const draft = {
+          from: String(body.from ?? "") || mailbox.fromAddress(account),
+          to: list(body.to), cc: list(body.cc), bcc: list(body.bcc),
+          subject: String(body.subject ?? ""),
+          text: String(body.text ?? ""),
+          html: String(body.html ?? ""),
+          attachments,
+          inReplyTo: body.inReplyTo ? String(body.inReplyTo) : undefined,
+          references: Array.isArray(body.references) ? body.references.map(String) : undefined,
+        };
+
+        try {
+          const result = await mailbox.send(account, draft, config, body.force === true);
+          logger.info(result.blocked
+            ? `outbound blocked (${result.analysis.score}/100) from ${account}`
+            : `sent ${result.analysis.id} from ${account} to ${result.accepted.length} recipient(s)${result.simulated ? " (simulated)" : ""}`);
+          return json(res, result.blocked ? 422 : 200, { ...result, status: mailbox.getStatus() });
+        } catch (err) {
+          return json(res, 502, { error: (err as Error).message });
+        }
       }
 
       // No body (or no account) disconnects everything; naming one account

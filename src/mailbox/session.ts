@@ -22,6 +22,9 @@ import { parseMessage } from "../core/parse.js";
 import type { Analysis, Verdict } from "../core/types.js";
 import { deriveCategories, type CategoryStore, type ThreatCategory } from "./categories.js";
 import { fetchRecent, listMailboxes, type MailboxCredentials, type MailboxFolder } from "./imap.js";
+import { bareAddress, buildMime, envelopeRecipients, makeMessageId, type OutgoingMessage } from "./compose.js";
+import { smtpFor } from "./providers.js";
+import { sendMail } from "./smtp.js";
 
 /** A row in the message list. */
 export interface InboxItem {
@@ -72,8 +75,28 @@ interface Entry { item: InboxItem; analysis: Analysis }
 interface Account {
   view: AccountView;
   creds: MailboxCredentials | null;
+  /** Submission settings, guessed at connect time and correctable by the user. */
+  smtp: { host: string; port: number; tls: boolean } | null;
   limit: number;
   entries: Entry[];
+  /**
+   * Messages sent from here this session. A real server files them into Sent
+   * eventually, but the user expects to see what they just sent immediately.
+   */
+  outbox: Entry[];
+}
+
+/** What `send` reports back — including a refusal. */
+export interface SendResult {
+  ok: boolean;
+  /** True when the outbound scan stopped the message. */
+  blocked: boolean;
+  reason: string;
+  analysis: Analysis;
+  accepted: string[];
+  rejected: Array<{ address: string; reply: string }>;
+  /** True in demo mode: nothing left the machine. */
+  simulated: boolean;
 }
 
 const DEMO_FOLDERS: MailboxFolder[] = [
@@ -103,6 +126,12 @@ function snippetOf(text: string, html: string): string {
 function accountId(user: string, host: string): string {
   const raw = user.includes("@") ? user : `${user}@${host}`;
   return raw.toLowerCase().replace(/[^a-z0-9@._-]/g, "-");
+}
+
+/** Is this account currently showing a Sent folder? */
+function isSentFolder(view: AccountView): boolean {
+  const folder = view.folders.find((f) => f.name === view.mailbox);
+  return folder?.role === "sent" || /sent/i.test(view.mailbox);
 }
 
 /** Most dangerous first, then newest — what a security inbox should show. */
@@ -139,10 +168,18 @@ export class MailboxSession {
     };
   }
 
-  /** Entries for one account, or every account when id is "". */
+  /**
+   * Entries for one account, or every account when id is "".
+   *
+   * Anything sent this session is folded in while a Sent folder is showing,
+   * so a message appears the moment it leaves rather than whenever the server
+   * gets round to filing it.
+   */
   private entriesFor(id: string): Entry[] {
-    if (!id) return sortItems([...this.accounts.values()].flatMap((a) => a.entries));
-    return this.accounts.get(id)?.entries ?? [];
+    const of = (a: Account) => (isSentFolder(a.view) ? [...a.outbox, ...a.entries] : a.entries);
+    if (!id) return sortItems([...this.accounts.values()].flatMap(of));
+    const account = this.accounts.get(id);
+    return account ? of(account) : [];
   }
 
   list(): InboxItem[] {
@@ -191,7 +228,8 @@ export class MailboxSession {
 
     const account: Account = {
       view: { id, label, host: "demo.mailbox", mailbox: folder, demo: true, folders: DEMO_FOLDERS, total: chosen.length, fetched: 0, counts: zero() },
-      creds: null, limit: chosen.length, entries: [],
+      creds: null, smtp: null, limit: chosen.length, entries: [],
+      outbox: this.accounts.get(id)?.outbox ?? [],
     };
     this.accounts.set(id, account);
     await this.ingest(account, chosen.map((s, i) => ({ seq: chosen.length - i, raw: Buffer.from(s.raw, "utf8") })), config);
@@ -200,7 +238,7 @@ export class MailboxSession {
   }
 
   /** Connect a real mailbox and add it as an account. */
-  async connect(creds: MailboxCredentials, config: AppConfig, limit: number): Promise<MailboxStatus> {
+  async connect(creds: MailboxCredentials, config: AppConfig, limit: number, smtp?: { host: string; port: number; tls: boolean }): Promise<MailboxStatus> {
     const folders = await listMailboxes(creds);
     const { total, messages } = await fetchRecent(creds, limit);
     const id = accountId(creds.user, creds.host);
@@ -210,7 +248,12 @@ export class MailboxSession {
         folders: folders.length ? folders : [{ name: creds.mailbox || "INBOX", label: creds.mailbox || "Inbox", role: "inbox" }],
         total, fetched: 0, counts: zero(),
       },
-      creds, limit, entries: [],
+      creds,
+      // The user can override this from the compose window; the guess just
+      // means sending usually works without asking for more settings.
+      smtp: smtp?.host ? smtp : smtpFor(creds.host, creds.user),
+      limit, entries: [],
+      outbox: this.accounts.get(id)?.outbox ?? [],
     };
     this.accounts.set(id, account);
     await this.ingest(account, messages, config);
@@ -241,6 +284,91 @@ export class MailboxSession {
     else this.accounts.clear();
     if (!this.accounts.has(this.activeId)) this.activeId = "";
     return this.getStatus();
+  }
+
+  // ---- Sending ------------------------------------------------------------
+
+  /** Where a message from this account should say it comes from. */
+  fromAddress(id: string): string {
+    const account = this.accounts.get(id);
+    if (!account) return "";
+    return account.creds?.user || account.view.label;
+  }
+
+  /**
+   * Send a message.
+   *
+   * The message is analysed **before** it is submitted, by the same engine that
+   * scores inbound mail. A tool that scans what arrives but not what leaves is
+   * only watching half the door: a compromised account sending malware to your
+   * customers is the more expensive incident. A malicious verdict refuses the
+   * submission unless the sender explicitly overrides it, and the refusal is
+   * recorded either way.
+   */
+  async send(id: string, draft: OutgoingMessage, config: AppConfig, force = false): Promise<SendResult> {
+    const account = this.accounts.get(id);
+    if (!account) throw new Error("Unknown account.");
+
+    const recipients = envelopeRecipients(draft);
+    if (!recipients.length) throw new Error("Add at least one recipient.");
+
+    const messageId = makeMessageId(draft.from);
+    const raw = buildMime(draft, messageId);
+    const analysis = await analyzeRaw(raw, config);
+
+    if (analysis.verdict === "malicious" && !force) {
+      return {
+        ok: false, blocked: true, simulated: false, accepted: [], rejected: [],
+        reason: `Outbound scan scored this ${analysis.score}/100: ${analysis.summary}`,
+        analysis,
+      };
+    }
+
+    let accepted = recipients;
+    let rejected: SendResult["rejected"] = [];
+    const simulated = account.view.demo || !account.creds || !account.smtp;
+
+    if (!simulated) {
+      const result = await sendMail(
+        { ...account.smtp!, user: account.creds!.user, password: account.creds!.password },
+        bareAddress(draft.from),
+        recipients,
+        raw,
+      );
+      accepted = result.accepted;
+      rejected = result.rejected;
+    }
+
+    // File it so the Sent folder shows it straight away.
+    const parsed = parseMessage(raw);
+    account.outbox.unshift({
+      analysis,
+      item: {
+        id: analysis.id,
+        accountId: account.view.id,
+        accountLabel: account.view.label,
+        // Sent items sort above anything fetched, which is what "just sent"
+        // should look like.
+        seq: Number.MAX_SAFE_INTEGER - account.outbox.length,
+        from: { name: parsed.from.name, address: parsed.from.address },
+        to: recipients.join(", "),
+        subject: parsed.subject,
+        date: parsed.date,
+        snippet: snippetOf(parsed.text, parsed.html),
+        verdict: analysis.verdict,
+        score: analysis.score,
+        attachmentCount: parsed.attachments.length,
+        urlCount: parsed.urls.length,
+        findingCount: analysis.findings.length,
+        threat: deriveCategories(analysis),
+        labels: this.categories.for(analysis.id),
+      },
+    });
+
+    return {
+      ok: true, blocked: false, simulated, accepted, rejected, analysis,
+      reason: rejected.length ? `${rejected.length} recipient(s) refused by the server.` : "",
+    };
   }
 
   // ---- Analysis -----------------------------------------------------------

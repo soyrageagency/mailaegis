@@ -7,6 +7,7 @@
  * Licensed under the SoyRage Attribution License (see LICENSE).
  */
 
+import { createInterface } from "node:readline";
 import { ASCII_BANNER, BRAND } from "../branding.js";
 import type { AppConfig } from "../config.js";
 import type { Logger } from "../logger.js";
@@ -49,7 +50,14 @@ export function runMenu(config: AppConfig, log: Logger): void {
   };
 
   const stdin = process.stdin;
-  if (stdin.isTTY) stdin.setRawMode(true);
+
+  // Arrow keys only exist on a real terminal. Piped through a task runner, an
+  // IDE console or `tsx watch` — which keeps stdin for its own commands —
+  // raw mode is unavailable and the menu would silently ignore every key.
+  // Fall back to typing a number, which works everywhere.
+  if (!stdin.isTTY) return runNumberedMenu(items, config);
+
+  stdin.setRawMode(true);
   stdin.resume();
   stdin.setEncoding("utf8");
   let busy = false;
@@ -62,7 +70,7 @@ export function runMenu(config: AppConfig, log: Logger): void {
     if (key === "\x1b[B" || key === "j") { sel = (sel + 1) % items.length; render(); return; }
     if (key === "\r" || key === "\n") {
       busy = true;
-      if (stdin.isTTY) stdin.setRawMode(false);
+      stdin.setRawMode(false);
       out(clear);
       const done = await items[sel].run().catch((e) => { out(`\n  ${C.red}✗ ${e.message}${C.reset}\n`); return false; });
       if (done) return quit();
@@ -73,6 +81,41 @@ export function runMenu(config: AppConfig, log: Logger): void {
       stdin.once("data", once);
     }
   });
+}
+
+/**
+ * The menu without a terminal: print the options, read a number per line.
+ *
+ * Not as pretty, but a menu that cannot be operated is worse than an ugly one.
+ */
+function runNumberedMenu(items: Item[], config: AppConfig): void {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  const render = () => {
+    out(`\n${C.blue}${ASCII_BANNER}${C.reset}\n`);
+    out(`  ${C.bold}What would you like to do?${C.reset}   ${C.dim}(type a number, then Enter)${C.reset}\n`);
+    if (config.demo) out(`  ${C.yellow}DEMO mode — VirusTotal and ClamAV verdicts are simulated.${C.reset}\n`);
+    out(`  ${C.dim}No arrow keys here: this is not an interactive terminal. Run ${C.reset}${C.bold}npx mailaegis menu${C.reset}${C.dim} in a real one for the full version.${C.reset}\n\n`);
+    items.forEach((it, i) => out(`  ${C.bold}${i + 1}${C.reset}) ${it.label}   ${C.gray}${it.hint}${C.reset}\n`));
+    out(`\n  ${C.gray}${BRAND.author} · ${BRAND.url}${C.reset}\n`);
+    rl.setPrompt(`\n  Choice [1-${items.length}]: `);
+    rl.prompt();
+  };
+
+  rl.on("line", async (line) => {
+    const choice = Number(line.trim());
+    if (!Number.isInteger(choice) || choice < 1 || choice > items.length) {
+      out(`  ${C.yellow}Enter a number between 1 and ${items.length}.${C.reset}\n`);
+      rl.prompt();
+      return;
+    }
+    const done = await items[choice - 1]!.run().catch((e: Error) => { out(`\n  ${C.red}✗ ${e.message}${C.reset}\n`); return false; });
+    if (done) { rl.close(); return quit(); }
+    render();
+  });
+  rl.on("close", () => quit());
+
+  render();
 }
 
 function quit(): never {

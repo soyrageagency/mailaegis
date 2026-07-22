@@ -49,18 +49,20 @@
   "scripts": {
     "build": "tsc && node scripts/copy-public.mjs",
     "prepublishOnly": "npm run build",
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx src/index.ts menu --demo",
     "start": "node dist/index.js",
     "scan": "node dist/index.js scan",
     "serve": "node dist/index.js serve",
     "menu": "node dist/index.js menu",
-    "demo": "node -e \"process.env.MAILAEGIS_DEMO='true';import('./dist/index.js')\" demo",
+    "demo": "node dist/index.js demo --demo",
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
     "fuzz": "node scripts/fuzz-check.mjs",
     "shots": "node scripts/shots.mjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "assets": "node scripts/brand-assets.mjs"
+    "assets": "node scripts/brand-assets.mjs",
+    "dev:watch": "tsx watch src/index.ts serve --demo",
+    "menu:demo": "node dist/index.js menu --demo"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

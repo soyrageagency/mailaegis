@@ -198,6 +198,26 @@ export function resolveHost(template: string, address: string): string {
 }
 
 /**
+ * Best-guess submission settings for a mailbox we already reach over IMAP.
+ *
+ * If the IMAP host matches a known preset we use that vendor's documented
+ * submission server. Otherwise we assume the common convention of swapping
+ * `imap.` for `smtp.` on port 465, which is right far more often than it is
+ * wrong — and the compose form lets the user correct it either way.
+ */
+export function smtpFor(imapHost: string, address: string): { host: string; port: number; tls: boolean } {
+  const host = String(imapHost).toLowerCase();
+  for (const p of PROVIDERS) {
+    if (p.selfHosted) continue;
+    if (host === p.host.toLowerCase()) return { host: p.smtpHost, port: p.smtpPort, tls: p.smtpTls };
+  }
+  // Self-hosted platforms usually answer submission on the same hostname.
+  if (/^mail\./i.test(host)) return { host: imapHost, port: 465, tls: true };
+  if (/^imap\./i.test(host)) return { host: imapHost.replace(/^imap\./i, "smtp."), port: 465, tls: true };
+  return { host: resolveHost("smtp.{domain}", address), port: 465, tls: true };
+}
+
+/**
  * Guess the platform from an email address.
  *
  * Only well-known domains give a confident answer; a corporate domain on
