@@ -550,17 +550,47 @@ mailaegis serve                      # http://127.0.0.1:4850
 curl -s --data-binary @message.eml http://127.0.0.1:4850/api/analyze | jq .verdict
 ```
 
+**Analysis** — the two most integrators ever need:
+
 | Endpoint | Purpose |
 | --- | --- |
 | `POST /api/analyze` | Raw RFC-822 message in the body → JSON verdict |
 | `GET /api/meta` | Which engines are active, and your thresholds |
-| `POST /api/mailbox/connect` | Connect an IMAP mailbox (or `{"demo":true}`) |
-| `GET /api/mailbox/messages` | The analysed message list |
-| `GET /api/mailbox/messages/:id` | One full analysis |
-| `POST /api/mailbox/select` | Switch folder (Inbox, Sent, …) |
-| `GET/POST /api/categories` · `PUT …/labels` | Manage and assign labels |
 
-Set `MAILAEGIS_API_TOKEN` to require `Authorization: Bearer …`.
+**Mailboxes**
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/mailbox/status` | Connected accounts, counts, and any server-side preset |
+| `POST /api/mailbox/connect` | Connect an IMAP mailbox — or `{"demo":true}` |
+| `POST /api/mailbox/select` | `{account, folder}` — switch folder within one mailbox |
+| `POST /api/mailbox/active` | `{account}` — focus one mailbox, or `""` for the unified view |
+| `POST /api/mailbox/disconnect` | `{account}` for one, empty body for all |
+| `GET /api/mailbox/messages` | The analysed message list for the current view |
+| `GET /api/mailbox/messages/:id` | One full analysis |
+| `GET /api/mailbox/messages/:id/raw` | The original bytes, as `message/rfc822` |
+| `PUT /api/mailbox/messages/:id/labels` | `{labels:[…]}` |
+| `POST /api/mailbox/messages/:id/move` | `{folder}` — **quarantine**, the only write |
+| `POST /api/mailbox/send` | Compose and submit — **scanned before it leaves** |
+
+**Policy, audit and the rest**
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/lists` · `POST /api/lists` · `DELETE /api/lists/:kind/:value` | Sender allow and block lists |
+| `GET /api/audit?limit=` | Recent decisions from the audit trail |
+| `GET /api/categories` · `POST /api/categories` · `DELETE /api/categories/:id` | Threat classes and your own labels |
+| `GET /api/providers` | The IMAP/SMTP quick-connect presets |
+| `GET /api/updates` | The [announcement channel](channel/), proxied |
+| `GET /api/samples` · `POST /api/samples/:id` | The built-in demo corpus |
+
+Set `MAILAEGIS_API_TOKEN` to require `Authorization: Bearer …` on everything
+that reads mail or changes state. A malformed body answers **400**, never 500.
+
+> This table is checked against the router by `scripts/smoke.mjs` on every run —
+> it drifted badly once, from seven documented endpoints to twenty-four
+> implemented, and an integration contract that quietly stops matching the code
+> is worse than none.
 
 ### 3. Mail client UI
 
@@ -617,10 +647,14 @@ Run `mailaegis doctor` to see exactly which engines are live.
 
 ```
 mailaegis/
-├── desktop/                    # Electron wrapper (macOS & Windows builds)
-├── scripts/                    # copy-public · smoke · shots
+├── Dockerfile · docker-compose.yml    # Self-hosting, with ClamAV
+├── channel/updates.json               # The update & announcement feed
+├── integration/postfix-filter.sh      # Tested Postfix content filter
+├── desktop/                           # Electron wrapper (macOS & Windows)
+├── mobile/                            # Capacitor shell (Android APK)
+├── scripts/                           # build · smoke · fuzz · shots · assets
 └── src/
-    ├── index.ts                # CLI: scan · demo · serve · menu · doctor
+    ├── index.ts                # CLI: scan · demo · serve · menu · oauth · doctor
     ├── branding.ts · config.ts · logger.ts
     ├── core/
     │   ├── parse.ts            # Dependency-free MIME/RFC-822 parser
@@ -630,13 +664,21 @@ mailaegis/
     │   ├── clamav.ts           # clamd INSTREAM client
     │   ├── virustotal.ts       # VirusTotal API v3 lookups
     │   ├── hybrid.ts           # Hybrid Analysis (Falcon Sandbox) v2
+    │   ├── lists.ts            # Sender allow/block, and when an allow counts
     │   ├── analyze.ts          # The pipeline + scoring
+    │   ├── audit.ts            # Append-only trail + the SIEM webhook
+    │   ├── updates.ts          # Reads the announcement channel
     │   ├── report.ts           # Console · HTML · Markdown · JSON
     │   ├── demo.ts             # Built-in corpus (EICAR-based)
     │   └── icons.ts · types.ts
     ├── mailbox/
-    │   ├── imap.ts             # Minimal IMAP client (TLS)
-    │   ├── session.ts          # Folders, messages, analyses
+    │   ├── imap.ts             # Minimal IMAP client (TLS) + quarantine
+    │   ├── smtp.ts             # Minimal SMTP submission (TLS/STARTTLS)
+    │   ├── compose.ts          # MIME builder: RFC 2047 · 2231 · QP
+    │   ├── oauth.ts            # XOAUTH2 + token refresh
+    │   ├── oauth-login.ts      # The one-time browser sign-in (PKCE)
+    │   ├── providers.ts        # Microsoft 365 · Google · Mailcow · …
+    │   ├── session.ts          # Several mailboxes, messages, analyses
     │   └── categories.ts       # Threat classes + user labels
     ├── api/                    # HTTP API + the mail-client web UI
     └── menu/menu.ts

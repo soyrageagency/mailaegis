@@ -6,7 +6,7 @@
  * Crafted by SoyRage Agency — https://soyrage.es/
  */
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 
 const results = [];
 const ok = (name, cond, detail = "") => results.push({ name, ok: !!cond, detail });
@@ -567,6 +567,38 @@ await new Promise((r) => setTimeout(r, 150));
   await sendMail(creds, "ana@corp.example", ["nope@partner.example"], raw).catch((e) => { threw = e.message; });
   ok("smtp: every recipient refused is an error", /Every recipient was refused/.test(threw), threw);
   fake.close();
+}
+
+// ---- The README's API table is the integration contract ---------------------
+// It drifted from seven documented endpoints to twenty-four implemented before
+// anyone noticed. A contract that quietly stops matching the code is worse than
+// no contract, so the router is the source of truth and this fails loudly.
+{
+  const server = readFileSync("src/api/server.ts", "utf8");
+  const readme = readFileSync("README.md", "utf8");
+
+  const routes = new Set();
+  for (const m of server.matchAll(/path === "(\/api\/[^"]+)"/g)) routes.add(m[1]);
+  for (const m of server.matchAll(/path\.startsWith\("(\/api\/[^"]+)"\)/g)) routes.add(m[1].replace(/\/$/, ""));
+  // Pattern routes: /^\/api\/mailbox\/messages\/[^/]+\/raw$/ → …/messages/:id/raw
+  for (const m of server.matchAll(/\/\^\\\/api(\\\/[^/]*?)\$\/\.test/g)) {
+    routes.add(`/api${m[1].replace(/\\\//g, "/").replace(/\[\^\/\]\+/g, ":id")}`);
+  }
+
+  const undocumented = [...routes].filter((r) => !readme.includes(r)).sort();
+  ok("docs: every API route appears in the README", undocumented.length === 0,
+    undocumented.length ? `missing: ${undocumented.join(", ")}` : "");
+  // A sanity floor: if the extractor silently stops matching, this catches it
+  // rather than letting the check pass vacuously.
+  ok("docs: the route extractor still finds the router", routes.size >= 15, `found ${routes.size}`);
+
+  // The same for source files: a structure diagram nobody maintains is a map
+  // to a building that has been extended twice.
+  const structure = /## 🗂️ Project structure([\s\S]*?)```\s*\n\s*---/.exec(readme)?.[1] ?? "";
+  const sources = readdirSync("src/core").concat(readdirSync("src/mailbox")).filter((f) => f.endsWith(".ts"));
+  const missing = sources.filter((f) => !structure.includes(f));
+  ok("docs: the project structure lists every source file", missing.length === 0,
+    missing.length ? `missing: ${missing.join(", ")}` : "");
 }
 
 // ---- OAuth 2.0 / XOAUTH2 ----------------------------------------------------
