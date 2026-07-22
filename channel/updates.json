@@ -3,20 +3,18 @@
   "schema": 1,
   "product": "MailAegis",
   "latest": {
-    "version": "1.4.0",
+    "version": "1.5.0",
     "published": "2026-07-22",
     "mandatory": false,
-    "notes": "Sign in to Microsoft 365 and Google without an app password.",
+    "notes": "Quarantine: move a bad message out of the inbox, not just score it.",
     "changelog": [
-      "OAuth 2.0 for IMAP and SMTP. Run \"mailaegis oauth\", sign in in your browser, and no password is involved — the only way in to a Microsoft tenant with basic authentication switched off, which Microsoft is doing progressively.",
-      "Non-English subjects are decoded correctly. Long headers are split by the sender's client, and MailAegis was leaving a space at the break, so every rule matching on the subject missed.",
-      "Sender allow/block lists — and an allow-list entry only counts when the message also proves it really came from that sender.",
-      "Audit trail of every decision, including the overrides, forwarded to your SIEM if you want it.",
-      "Undo send, the raw source viewer, defanged IOC export, signatures, drafts and auto-refresh.",
-      "Several mailboxes at once, compose with outbound scanning, search operators and dark mode.",
-      "Android app and an installable PWA, so a phone works too."
+      "Quarantine — move a message to another folder on the server. It acts on the UID, prefers the atomic UID MOVE, and if your server offers no safe way to remove the original it says so instead of pretending. Nothing ever moves on its own.",
+      "OAuth 2.0 for IMAP and SMTP: run \"mailaegis oauth\" and no app password is involved. The only way in to a Microsoft tenant with basic authentication switched off.",
+      "Sender allow/block lists, an audit trail and SIEM webhook, undo send, the raw source viewer and defanged IOC export.",
+      "Non-English subjects are decoded correctly — long headers are split by the sender's client, and the break was leaving a stray space.",
+      "Several mailboxes at once, compose with outbound scanning, search operators, dark mode, an Android app and an installable PWA."
     ],
-    "url": "https://github.com/soyrageagency/mailaegis/releases/tag/v1.4.0",
+    "url": "https://github.com/soyrageagency/mailaegis/releases/tag/v1.5.0",
     "downloads": {
       "win": "https://github.com/soyrageagency/mailaegis/releases/latest",
       "mac-arm64": "https://github.com/soyrageagency/mailaegis/releases/latest",
