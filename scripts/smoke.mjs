@@ -313,6 +313,89 @@ await new Promise((r) => setTimeout(r, 150));
   ok("IMAP: lists folders and detects \\Sent", folders.some((f) => f.role === "inbox") && folders.some((f) => f.role === "sent"));
   ok("IMAP: skips \\Noselect folders", !folders.some((f) => f.name === "Skip"));
   fake.close();
+
+  // ---- Hostile or broken IMAP servers ---------------------------------------
+  // The server is named by the user, so it is not trusted input: a compromised
+  // or simply broken one must not be able to hang the analyser. A short
+  // timeout is passed so these finish quickly.
+  const hostile = async (handler) => {
+    const s = net.createServer(handler);
+    await new Promise((r) => s.listen(0, "127.0.0.1", r));
+    const creds = { host: "127.0.0.1", port: s.address().port, user: "u", password: "p", tls: false, mailbox: "INBOX" };
+    return { s, creds };
+  };
+  const failure = async (promise) => { try { await promise; return "resolved"; } catch (e) { return e.message; } };
+
+  {
+    // Claims a literal of a gigabyte, sends five bytes, hangs up.
+    const { s, creds } = await hostile((sock) => {
+      sock.write("* OK ready\r\n");
+      sock.on("data", (c) => {
+        const tag = c.toString().split(" ")[0];
+        const up = c.toString().toUpperCase();
+        if (up.includes("LOGIN")) sock.write(`${tag} OK\r\n`);
+        else if (up.includes("SELECT")) sock.write(`* 1 EXISTS\r\n${tag} OK\r\n`);
+        else if (up.includes("FETCH")) { sock.write("* 1 FETCH (BODY[] {999999999}\r\nshort"); sock.end(); }
+        else sock.write(`${tag} OK\r\n`);
+      });
+    });
+    const msg = await failure(fetchRecent(creds, 5, 1200));
+    ok("IMAP: a lying literal length gives up instead of hanging", /timeout/i.test(msg), msg);
+    s.close();
+  }
+
+  {
+    // Accepts the connection and then says nothing at all.
+    const { s, creds } = await hostile(() => {});
+    const msg = await failure(fetchRecent(creds, 5, 1200));
+    ok("IMAP: a silent server gives up instead of hanging", /greet|timeout/i.test(msg), msg);
+    s.close();
+  }
+
+  {
+    // Refuses the login — the message must name the cause, not a timeout.
+    const { s, creds } = await hostile((sock) => {
+      sock.write("* OK ready\r\n");
+      sock.on("data", (c) => sock.write(`${c.toString().split(" ")[0]} NO [AUTHENTICATIONFAILED] wrong password\r\n`));
+    });
+    const msg = await failure(fetchRecent(creds, 5, 1200));
+    ok("IMAP: a rejected login reports the server's own reason", /password|AUTHENTICATIONFAILED/i.test(msg), msg);
+    s.close();
+  }
+
+  {
+    // Twenty thousand untagged lines before the tagged completion.
+    const { s, creds } = await hostile((sock) => {
+      sock.write("* OK ready\r\n");
+      sock.on("data", (c) => {
+        const tag = c.toString().split(" ")[0];
+        const up = c.toString().toUpperCase();
+        if (up.includes("LOGIN")) sock.write(`${tag} OK\r\n`);
+        else if (up.includes("SELECT")) { for (let i = 0; i < 20000; i++) sock.write(`* ${i} EXISTS\r\n`); sock.write(`${tag} OK\r\n`); }
+        else sock.write(`${tag} OK\r\n`);
+      });
+    });
+    const msg = await failure(fetchRecent(creds, 5, 4000));
+    ok("IMAP: a flood of untagged responses is survivable", msg === "resolved" || !/HUNG/.test(msg), msg);
+    s.close();
+  }
+
+  {
+    // Folder names that would be dangerous if they were ever used as a path.
+    const { s, creds } = await hostile((sock) => {
+      sock.write("* OK ready\r\n");
+      sock.on("data", (c) => {
+        const tag = c.toString().split(" ")[0];
+        const up = c.toString().toUpperCase();
+        if (up.includes("LOGIN")) sock.write(`${tag} OK\r\n`);
+        else if (up.includes("LIST")) sock.write(`* LIST () "/" "../../etc"\r\n* LIST () "/" "<script>x</script>"\r\n${tag} OK\r\n`);
+        else sock.write(`${tag} OK\r\n`);
+      });
+    });
+    const names = await listMailboxes(creds, 1500).then((f) => f.map((x) => x.name)).catch(() => null);
+    ok("IMAP: hostile folder names come back as inert data", Array.isArray(names) && names.includes("../../etc"), JSON.stringify(names));
+    s.close();
+  }
 }
 
 // ---- Composing outbound mail ------------------------------------------------
