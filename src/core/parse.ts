@@ -268,6 +268,7 @@ export function parseMessage(raw: Buffer | string): ParsedMessage {
     replyTo: replyToRaw ? parseAddress(replyToRaw) : undefined,
     returnPath: returnPathRaw ? parseAddress(returnPathRaw) : undefined,
     to: parseAddressList(headers["to"] ?? ""),
+    cc: parseAddressList(headers["cc"] ?? ""),
     subject: decodeWords(headers["subject"] ?? ""),
     date: headers["date"] ?? "",
     messageId: (headers["message-id"] ?? "").replace(/[<>]/g, ""),

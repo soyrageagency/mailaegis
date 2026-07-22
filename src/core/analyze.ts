@@ -179,9 +179,13 @@ export async function analyzeParsed(message: ParsedMessage, config: AppConfig): 
       from: message.from,
       replyTo: message.replyTo,
       to: message.to,
+      cc: message.cc,
       subject: message.subject,
       date: message.date,
       messageId: message.messageId,
+      // Enough of the body to quote in a reply or a forward. Capped, because
+      // an analysis is a summary and nobody needs a 4 MB newsletter inlined.
+      textPreview: (message.text || "").slice(0, 4000),
       sizeBytes: message.rawSize,
       attachmentCount: message.attachments.length,
       urlCount: message.urls.length,

@@ -174,6 +174,38 @@ if (up) {
   const disconnected = await post("/api/mailbox/disconnect");
   ok("disconnect clears every mailbox", disconnected.connected === false && disconnected.accounts.length === 0);
 
+  // ---- Sending through the API ---------------------------------------------
+  // The block above ends disconnected, so open a mailbox to send from.
+  await post("/api/mailbox/connect", { demo: true });
+  const sent1 = await post("/api/mailbox/send", { to: "bob@partner.example", subject: "Quarterly figures", text: "Attached as agreed." });
+  ok("send: a benign message goes out", sent1.ok === true && sent1.blocked === false && sent1.accepted.includes("bob@partner.example"), JSON.stringify(sent1).slice(0, 140));
+  ok("send: the demo mailbox never actually transmits", sent1.simulated === true);
+  ok("send: what you send is scanned too", sent1.analysis && typeof sent1.analysis.score === "number");
+
+  const sentFolder = await post("/api/mailbox/select", { folder: "Sent" });
+  const sentRows = await (await fetch(`${B}/api/mailbox/messages`)).json();
+  ok("send: it appears in Sent straight away", sentRows.messages.some((m) => m.subject === "Quarterly figures"), JSON.stringify(sentFolder.fetched));
+  await post("/api/mailbox/select", { folder: "INBOX" });
+
+  const noOne = await fetch(`${B}/api/mailbox/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject: "nobody" }) });
+  ok("send: refuses a message with no recipients", noOne.status === 502 || noOne.status === 400);
+
+  // A message carrying a blocked extension must not leave quietly.
+  const evil = await fetch(`${B}/api/mailbox/send`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      to: "victim@partner.example", subject: "Invoice", text: "See attached.",
+      attachments: [{ filename: "invoice.exe", contentType: "application/octet-stream", base64: Buffer.from("MZ  fake").toString("base64") }],
+    }),
+  });
+  const evilBody = await evil.json();
+  ok("send: the outbound scan holds a dangerous attachment back", evil.status === 422 && evilBody.blocked === true, `${evil.status} ${JSON.stringify(evilBody).slice(0, 120)}`);
+  const forced = await post("/api/mailbox/send", {
+    to: "victim@partner.example", subject: "Invoice", text: "See attached.", force: true,
+    attachments: [{ filename: "invoice.exe", contentType: "application/octet-stream", base64: Buffer.from("MZ  fake").toString("base64") }],
+  });
+  ok("send: an explicit override is honoured", forced.ok === true && forced.blocked === false);
+
   // ---- Provider presets ----------------------------------------------------
   const { providers } = await (await fetch(`${B}/api/providers`)).json();
   ok("presets cover the big corporate platforms", ["microsoft365", "google-workspace", "mailcow"].every((id) => providers.some((p) => p.id === id)));

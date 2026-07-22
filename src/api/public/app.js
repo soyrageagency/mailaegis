@@ -50,6 +50,114 @@ function when(dateStr) {
 const vIcon = (v) => (v === "clean" ? "check" : v === "suspicious" ? "alert" : "danger");
 const vTitle = (v) => (v === "clean" ? "Clean" : v === "suspicious" ? "Suspicious" : "Malicious — quarantine");
 
+// ------------------------------------------------------------ sound & toast
+/*
+ * Cues are synthesised rather than shipped as audio files: a few sine tones
+ * weigh nothing, work offline in the desktop build, and cannot be mistaken for
+ * a system alert. Off by default is wrong for a security tool — you want to
+ * hear that something malicious arrived — but it is one click to silence, and
+ * the choice is remembered.
+ */
+const SOUND_KEY = "mailaegis.sound";
+let audio = null;
+
+function soundOn() {
+  try { return localStorage.getItem(SOUND_KEY) !== "off"; } catch { return true; }
+}
+
+const TONES = {
+  // [frequency, start, length] — kept short and soft; this is an office tool.
+  sent: [[660, 0, 0.08], [990, 0.07, 0.12]],
+  clean: [[880, 0, 0.09]],
+  warn: [[520, 0, 0.11], [415, 0.1, 0.16]],
+  alert: [[400, 0, 0.13], [320, 0.14, 0.13], [400, 0.28, 0.2]],
+};
+
+function chime(kind) {
+  if (!soundOn() || !TONES[kind]) return;
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.state === "suspended") audio.resume();
+    for (const [freq, at, len] of TONES[kind]) {
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const t0 = audio.currentTime + at;
+      // A tiny attack and a real decay: an abrupt gate is what makes a
+      // synthesised tone sound like a click rather than a note.
+      gain.gain.setValueAtTime(0, t0);
+      gain.gain.linearRampToValueAtTime(0.075, t0 + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + len);
+      osc.connect(gain).connect(audio.destination);
+      osc.start(t0);
+      osc.stop(t0 + len + 0.02);
+    }
+  } catch { /* no audio device, or the browser refused — never fatal */ }
+}
+
+// ---------------------------------------------------------------- dialogs
+/*
+ * confirm(), alert() and prompt() are never used here. They freeze the page,
+ * they cannot be styled, and — the part that matters for a security tool —
+ * Chrome labels them with the bare origin ("127.0.0.1:4850 says"), which is
+ * exactly the chrome a phishing page wears. Our own dialogs look like the
+ * product they belong to.
+ */
+function dialog({ title, body = "", confirmLabel = "Confirm", cancelLabel = "Cancel", danger = false, input = null }) {
+  return new Promise((resolve) => {
+    const host = document.createElement("div");
+    host.className = "modal";
+    host.innerHTML = `
+      <div class="mbox" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+        <h3>${esc(title)}</h3>
+        ${body ? `<p>${esc(body)}</p>` : ""}
+        ${input !== null ? `<input class="minput" value="${esc(input)}" />` : ""}
+        <div class="mrowbtns">
+          <button class="ghost sm" data-no>${esc(cancelLabel)}</button>
+          <button class="mgo ${danger ? "danger" : ""}" data-yes>${esc(confirmLabel)}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(host);
+    requestAnimationFrame(() => host.classList.add("in"));
+
+    const field = host.querySelector(".minput");
+    if (field) { field.focus(); field.select(); }
+    else host.querySelector("[data-yes]").focus();
+
+    const done = (value) => {
+      host.classList.remove("in");
+      setTimeout(() => host.remove(), 200);
+      document.removeEventListener("keydown", onKey);
+      resolve(value);
+    };
+    const accept = () => done(field ? field.value.trim() : true);
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); done(null); }
+      if (e.key === "Enter" && field) { e.preventDefault(); accept(); }
+    };
+
+    host.querySelector("[data-yes]").addEventListener("click", accept);
+    host.querySelector("[data-no]").addEventListener("click", () => done(null));
+    // Clicking the backdrop is a cancel, but only the backdrop itself.
+    host.addEventListener("mousedown", (e) => { if (e.target === host) done(null); });
+    document.addEventListener("keydown", onKey);
+  });
+}
+
+const ask = (title, body, opts = {}) => dialog({ title, body, confirmLabel: "Confirm", ...opts }).then(Boolean);
+const askText = (title, value = "", opts = {}) => dialog({ title, input: value, confirmLabel: "Save", ...opts });
+const notify = (title, body) => dialog({ title, body, confirmLabel: "Got it", cancelLabel: "" }).then(() => undefined);
+
+function toast(text, kind = "") {
+  const el = document.createElement("div");
+  el.className = `toast ${kind}`;
+  el.textContent = text;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("in"));
+  setTimeout(() => { el.classList.remove("in"); setTimeout(() => el.remove(), 250); }, 4200);
+}
+
 async function api(path, options) {
   const r = await fetch(path, options);
   const body = await r.json().catch(() => ({}));
@@ -99,9 +207,10 @@ async function init() {
     $("#backToClient").classList.add("hidden");
     $("#disconnect").classList.add("hidden"); $("#analyseFile").classList.add("hidden");
   });
-  $("#addAcct").addEventListener("click", () => { $("#form").reset(); showConnect(); });
   $("#backToClient").addEventListener("click", showClient);
+  wirePicker();
   await loadProviders();
+  wireComposer();
   $("#q").addEventListener("input", () => { S.filter.q = $("#q").value.toLowerCase(); renderList(); });
   $("#newLabel").addEventListener("click", createLabel);
 }
@@ -217,43 +326,81 @@ function activeAccount() {
   return (st.accounts || []).find((a) => a.id === st.activeId) || null;
 }
 
+/**
+ * The mailbox picker.
+ *
+ * A rail-height list does not survive a company with eight mailboxes, so the
+ * switcher collapses to one line showing where you are, and opens a menu with
+ * the rest. Each entry carries its own risk count, because the point of
+ * running several is noticing which one is being attacked.
+ */
 function renderAccounts() {
   const st = S.status || {};
   const accounts = st.accounts || [];
-  const unified = accounts.length > 1
-    ? `<button class="arow ${st.activeId === "" ? "active" : ""}" data-account="">
-         ${icon("inbox")}
-         <span class="atext"><span class="alabel">All mailboxes</span>
-         <span class="ahost">${accounts.length} connected</span></span>
-         <span class="n">${accounts.reduce((t, a) => t + a.fetched, 0)}</span>
-       </button>`
-    : "";
+  const active = accounts.find((a) => a.id === st.activeId);
+  const risky = (a) => a.counts.malicious + a.counts.suspicious;
+  const totalRisk = accounts.reduce((t, a) => t + risky(a), 0);
 
-  $("#accounts").innerHTML = unified + accounts.map((a) => {
-    const bad = a.counts.malicious + a.counts.suspicious;
-    return `<button class="arow ${a.id === st.activeId ? "active" : ""}" data-account="${esc(a.id)}" title="${esc(a.label)} · ${esc(a.host)}">
-      ${icon("mail")}
-      <span class="atext"><span class="alabel">${esc(a.label)}</span>
-      <span class="ahost">${esc(a.demo ? "demo mailbox" : a.host)} · ${esc(a.mailbox)}</span></span>
-      ${bad ? `<span class="n bad">${bad}</span>` : `<span class="n">${a.fetched}</span>`}
-      <span class="x" data-drop="${esc(a.id)}" title="Disconnect this mailbox">×</span>
+  $("#pickerBtn").innerHTML = accounts.length === 0
+    ? `${icon("mail")}<span class="ptext"><span class="plabel">No mailbox</span><span class="psub">Connect one to begin</span></span>${caret()}`
+    : active
+      ? `${icon("mail")}<span class="ptext"><span class="plabel">${esc(active.label)}</span>
+         <span class="psub">${esc(active.demo ? "demo mailbox" : active.host)} · ${esc(active.mailbox)}</span></span>
+         ${risky(active) ? `<span class="pn bad">${risky(active)}</span>` : ""}${caret()}`
+      : `${icon("inbox")}<span class="ptext"><span class="plabel">All mailboxes</span>
+         <span class="psub">${accounts.length} connected</span></span>
+         ${totalRisk ? `<span class="pn bad">${totalRisk}</span>` : ""}${caret()}`;
+
+  const entry = (id, glyph, label, sub, count, drop) => `
+    <button class="popt ${id === st.activeId ? "active" : ""}" role="option" data-account="${esc(id)}">
+      ${icon(glyph)}
+      <span class="ptext"><span class="plabel">${esc(label)}</span><span class="psub">${esc(sub)}</span></span>
+      ${count ? `<span class="pn bad">${count}</span>` : ""}
+      ${drop ? `<span class="x" data-drop="${esc(id)}" title="Disconnect">×</span>` : ""}
     </button>`;
-  }).join("") || '<div class="empty2">No mailbox connected.</div>';
 
-  $("#accounts").onclick = async (e) => {
+  $("#pickerMenu").innerHTML =
+    (accounts.length > 1 ? entry("", "inbox", "All mailboxes", `${accounts.length} connected · everything in one list`, totalRisk, false) : "") +
+    accounts.map((a) => entry(a.id, "mail", a.label, `${a.demo ? "demo mailbox" : a.host} · ${a.fetched} scanned`, risky(a), true)).join("") +
+    `<button class="popt add" data-add>${icon("drafts")}<span class="ptext"><span class="plabel">Connect another mailbox…</span><span class="psub">IMAP, or the demo corpus</span></span></button>`;
+}
+
+function caret() {
+  return '<svg class="pcaret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10l5 5 5-5"/></svg>';
+}
+
+function togglePicker(open) {
+  const menu = $("#pickerMenu");
+  const show = open === undefined ? menu.classList.contains("hidden") : open;
+  menu.classList.toggle("hidden", !show);
+  $("#picker").classList.toggle("open", show);
+  $("#pickerBtn").setAttribute("aria-expanded", String(show));
+}
+
+function wirePicker() {
+  $("#pickerBtn").addEventListener("click", (e) => { e.stopPropagation(); togglePicker(); });
+  document.addEventListener("click", (e) => { if (!e.target.closest("#picker")) togglePicker(false); });
+
+  $("#pickerMenu").addEventListener("click", async (e) => {
     const drop = e.target.closest("[data-drop]");
     if (drop) {
       e.stopPropagation();
-      if (!confirm("Disconnect this mailbox?")) return;
+      const account = (S.status.accounts || []).find((a) => a.id === drop.dataset.drop);
+      togglePicker(false);
+      if (!await ask("Disconnect this mailbox?", `${account ? account.label : "This mailbox"} will be closed. Nothing is deleted on the server — reconnect any time.`, { confirmLabel: "Disconnect", danger: true })) return;
       S.status = await api("/api/mailbox/disconnect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account: drop.dataset.drop }) });
       if (!S.status.connected) { S.messages = []; S.selected = null; showConnect(); $("#disconnect").classList.add("hidden"); return; }
       await loadMessages(); clearRead(); renderRail(); renderList();
+      toast(`${account ? account.label : "Mailbox"} disconnected.`);
       return;
     }
+    if (e.target.closest("[data-add]")) { togglePicker(false); $("#form").reset(); showConnect(); return; }
+
     const b = e.target.closest("[data-account]"); if (!b) return;
+    togglePicker(false);
     S.status = await api("/api/mailbox/active", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account: b.dataset.account }) });
     await loadMessages(); clearRead(); renderRail(); renderList();
-  };
+  });
 }
 
 function clearRead() {
@@ -280,7 +427,7 @@ function renderRail() {
       S.status = await api("/api/mailbox/select", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account: acct.id, folder: b.dataset.folder }) });
       await loadMessages(); clearRead();
       renderRail(); renderList();
-    } catch (err) { alert(err.message); } finally { busy(false); }
+    } catch (err) { toast(err.message, "bad"); } finally { busy(false); }
   };
 
   const tc = st.threatCounts || {};
@@ -305,7 +452,7 @@ function renderRail() {
     const del = e.target.closest("[data-del]");
     if (del) {
       e.stopPropagation();
-      if (!confirm("Delete this label?")) return;
+      if (!await ask("Delete this label?", "It is removed from every message that carries it. The messages themselves are untouched.", { confirmLabel: "Delete", danger: true })) return;
       const r = await api(`/api/categories/${encodeURIComponent(del.dataset.del)}`, { method: "DELETE" });
       S.categories = r.categories; S.messages = r.messages;
       if (S.filter.label === del.dataset.del) S.filter.label = "";
@@ -319,13 +466,13 @@ function renderRail() {
 }
 
 async function createLabel() {
-  const name = prompt("Name for the new label:");
+  const name = await askText("New label", "", { confirmLabel: "Create" });
   if (!name) return;
   try {
     const r = await api("/api/categories", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
     S.categories = r.categories;
     renderRail();
-  } catch (err) { alert(err.message); }
+  } catch (err) { toast(err.message, "bad"); }
 }
 
 // ------------------------------------------------------------------- list
@@ -389,7 +536,7 @@ function analyseRaw(raw) {
       if (!S.status) { S.status = { connected: true, accounts: [], activeId: "", fetched: 1, counts: {}, threatCounts: {} }; showClient(); }
       renderRead(a, null);
     })
-    .catch((e) => alert("Analysis failed: " + e.message))
+    .catch((e) => toast("Analysis failed: " + e.message, "bad"))
     .finally(() => busy(false));
 }
 
@@ -419,6 +566,11 @@ function renderRead(a, item) {
       <div class="rsubject">${esc(m.subject || "(no subject)")}</div>
       <div class="rfrom"><b>${esc(m.from.name || m.from.address)}</b> <span class="muted">&lt;${esc(m.from.address)}&gt;</span></div>
       <div class="rmeta">to ${esc(m.to.map((t) => t.address).join(", ") || "—")} · ${esc(m.date || "")}${m.replyTo ? ` · reply-to ${esc(m.replyTo.address)}` : ""}</div>
+      ${item ? `<div class="ractions">
+        <button class="ghost sm" data-act="reply">Reply</button>
+        <button class="ghost sm" data-act="replyAll">Reply all</button>
+        <button class="ghost sm" data-act="forward">Forward</button>
+      </div>` : ""}
       <div class="rtags">
         ${threat.filter((t) => t !== "clean").map((t) => `<span class="tag" style="background:${esc((S.threats[t] || {}).colour || "#8b8b86")}">${esc((S.threats[t] || {}).label || t)}</span>`).join("")}
         ${labels.map((id) => { const c = S.categories.find((x) => x.id === id); return c ? `<span class="tag" style="background:${esc(c.colour)}">${esc(c.name)}</span>` : ""; }).join("")}
@@ -482,19 +634,230 @@ function renderRead(a, item) {
 
   const btn = $("#editLabels");
   if (btn) btn.addEventListener("click", () => editLabels(a.id, labels));
+
+  const actions = $("#read").querySelector(".ractions");
+  if (actions) actions.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-act]");
+    if (b) openComposer(b.dataset.act, a, item);
+  });
+}
+
+// --------------------------------------------------------------- composer
+const C = { attachments: [], reply: null, force: false };
+
+function openComposer(mode, analysis, item) {
+  const accounts = (S.status && S.status.accounts) || [];
+  // Reply from the mailbox the message landed in, not from whichever one
+  // happens to be selected — answering a finance@ thread as security@ is a
+  // mistake nobody notices until the customer replies to the wrong address.
+  const preferred = (item && item.accountId) || S.status.activeId || (accounts[0] || {}).id || "";
+  $("#cfrom").innerHTML = accounts.map((a) => `<option value="${esc(a.id)}" ${a.id === preferred ? "selected" : ""}>${esc(a.label)}</option>`).join("")
+    || '<option value="">no mailbox connected</option>';
+
+  C.attachments = []; C.force = false; C.reply = null;
+  $("#cscan").className = "cscan hidden";
+  $("#cto").value = ""; $("#ccc").value = ""; $("#cbcc").value = "";
+  $("#csubject").value = ""; $("#cbody").value = "";
+  renderAttachments();
+  setCarbon(false);
+
+  if (mode !== "new" && analysis) {
+    const m = analysis.message;
+    const sender = m.replyTo ? m.replyTo.address : m.from.address;
+    const quoted = `\n\nOn ${m.date || "an earlier date"}, ${m.from.name || m.from.address} wrote:\n` +
+      String(analysis.message.textPreview || item.snippet || "").split("\n").map((l) => `> ${l}`).join("\n");
+
+    if (mode === "forward") {
+      $("#csubject").value = /^(fwd?|rv):/i.test(m.subject) ? m.subject : `Fwd: ${m.subject}`;
+      $("#cbody").value = `\n\n---------- Forwarded message ----------\nFrom: ${m.from.name || ""} <${m.from.address}>\nDate: ${m.date}\nSubject: ${m.subject}\nTo: ${m.to.map((t) => t.address).join(", ")}\n\n${analysis.message.textPreview || item.snippet || ""}`;
+    } else {
+      $("#csubject").value = /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject}`;
+      $("#cto").value = sender;
+      if (mode === "replyAll") {
+        // Everyone on the original except us, so a reply-all does not mail
+        // the sender's own address back to them twice.
+        const mine = (accounts.find((a) => a.id === preferred) || {}).label || "";
+        const others = m.to.map((t) => t.address).concat((m.cc || []).map((t) => t.address))
+          .filter((a) => a && a.toLowerCase() !== mine.toLowerCase() && a.toLowerCase() !== sender.toLowerCase());
+        if (others.length) { $("#ccc").value = [...new Set(others)].join(", "); setCarbon(true); }
+      }
+      $("#cbody").value = quoted;
+      C.reply = { messageId: m.messageId || "", references: m.references || [] };
+    }
+  }
+
+  // Replying to something the scanner flagged is how a BEC succeeds: the
+  // victim answers the attacker's Reply-To in good faith. A mail client would
+  // fill that address in silently. A security tool has to say so.
+  if (mode !== "new" && item && analysis) {
+    const m = analysis.message;
+    const redirected = m.replyTo && m.replyTo.address && m.replyTo.address.toLowerCase() !== m.from.address.toLowerCase();
+    if (item.verdict !== "clean" || redirected) {
+      $("#cscan").className = "cscan warn";
+      $("#cscan").innerHTML =
+        `<b>Careful — you are answering a ${esc(item.verdict)} message (${item.score}/100).</b>` +
+        (redirected ? `<div>Its <b>Reply-To</b> points at <span class="mono">${esc(m.replyTo.address)}</span>, not at the address it claims to be from (<span class="mono">${esc(m.from.address)}</span>). Your reply goes to the first one.</div>` : "") +
+        `<div class="muted">Check the recipient before sending.</div>`;
+      chime("warn");
+    }
+  }
+
+  $("#cwhat").textContent = mode === "new" ? "New message" : mode === "forward" ? "Forward" : mode === "replyAll" ? "Reply to all" : "Reply";
+  $("#composer").classList.remove("hidden");
+  requestAnimationFrame(() => $("#composer").classList.add("in"));
+  (mode === "new" ? $("#cto") : $("#cbody")).focus();
+  if (mode !== "new" && mode !== "forward") $("#cbody").setSelectionRange(0, 0);
+}
+
+function closeComposer() {
+  $("#composer").classList.remove("in");
+  setTimeout(() => $("#composer").classList.add("hidden"), 200);
+}
+
+function setCarbon(on) {
+  $("#cccrow").classList.toggle("hidden", !on);
+  $("#cbccrow").classList.toggle("hidden", !on);
+}
+
+function renderAttachments() {
+  $("#cfiles").innerHTML = C.attachments.map((a, i) => `
+    <span class="cfile">${icon("paperclip")}${esc(a.filename)}
+      <span class="sz">${Math.max(1, Math.round(a.size / 1024))} KB</span>
+      <button data-rm="${i}" aria-label="Remove">×</button></span>`).join("");
+  $("#cfiles").onclick = (e) => {
+    const b = e.target.closest("[data-rm]"); if (!b) return;
+    C.attachments.splice(Number(b.dataset.rm), 1);
+    renderAttachments();
+  };
+}
+
+/** Read a file into base64 without loading it twice. */
+function readAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+    r.onload = () => resolve(String(r.result).split(",", 2)[1] || "");
+    r.readAsDataURL(file);
+  });
+}
+
+async function sendComposed() {
+  const btn = $("#csend");
+  btn.disabled = true;
+  const original = btn.innerHTML;
+  btn.innerHTML = "Scanning…";
+  try {
+    const payload = {
+      account: $("#cfrom").value,
+      to: $("#cto").value, cc: $("#ccc").value, bcc: $("#cbcc").value,
+      subject: $("#csubject").value, text: $("#cbody").value,
+      attachments: C.attachments.map((a) => ({ filename: a.filename, contentType: a.contentType, base64: a.base64 })),
+      inReplyTo: C.reply ? C.reply.messageId : undefined,
+      references: C.reply ? C.reply.references : undefined,
+      force: C.force,
+    };
+    const r = await fetch("/api/mailbox/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const body = await r.json();
+
+    if (r.status === 422 && body.blocked) {
+      // The outbound scan refused it. Show why, and let the sender override
+      // deliberately rather than silently.
+      C.force = true;
+      $("#cscan").className = "cscan blocked";
+      $("#cscan").innerHTML = `<b>Held back — ${esc(body.analysis.verdict)} (${body.analysis.score}/100)</b>
+        <div>${esc(body.reason)}</div>
+        <ul>${body.analysis.findings.slice(0, 4).map((f) => `<li>${esc(f.title)}</li>`).join("")}</ul>
+        <div class="muted">Press send again to submit it anyway. The override is logged.</div>`;
+      return;
+    }
+    if (!r.ok) throw new Error(body.error || r.statusText);
+
+    S.status = body.status;
+    await loadMessages();
+    renderRail(); renderList();
+    chime(body.analysis.verdict === "clean" ? "sent" : "warn");
+    closeComposer();
+    toast(body.simulated
+      ? `Composed and scanned — nothing was sent, this is the demo mailbox.`
+      : `Sent to ${body.accepted.length} recipient(s).${body.rejected.length ? ` ${body.rejected.length} refused.` : ""}`);
+  } catch (err) {
+    $("#cscan").className = "cscan blocked";
+    $("#cscan").textContent = err.message;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+
+function wireComposer() {
+  $("#compose").addEventListener("click", () => openComposer("new"));
+  $("#cclose").addEventListener("click", closeComposer);
+  $("#csend").addEventListener("click", sendComposed);
+  $("#ccarbon").addEventListener("click", () => setCarbon($("#cccrow").classList.contains("hidden")));
+  $("#cattach").addEventListener("click", () => $("#cfileinput").click());
+  $("#cfileinput").addEventListener("change", async (e) => {
+    for (const file of [...e.target.files]) {
+      C.attachments.push({ filename: file.name, contentType: file.type || "application/octet-stream", size: file.size, base64: await readAsBase64(file) });
+    }
+    e.target.value = "";
+    renderAttachments();
+  });
+  // Escape closes, Ctrl/Cmd+Enter sends — what every mail client has taught
+  // people to expect.
+  document.addEventListener("keydown", (e) => {
+    if ($("#composer").classList.contains("hidden")) return;
+    if (e.key === "Escape") closeComposer();
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendComposed();
+  });
 }
 
 async function editLabels(id, current) {
-  if (!S.categories.length) { alert('No labels yet — create one with the "+" next to Labels.'); return; }
-  const names = S.categories.map((c, i) => `${i + 1}. ${c.name}${current.includes(c.id) ? " ✓" : ""}`).join("\n");
-  const answer = prompt(`Labels for this message — enter the numbers to apply, comma separated (empty clears):\n\n${names}`, current.map((id2) => S.categories.findIndex((c) => c.id === id2) + 1).filter((n) => n > 0).join(","));
-  if (answer === null) return;
-  const chosen = answer.split(",").map((x) => Number(x.trim())).filter((n) => n >= 1 && n <= S.categories.length).map((n) => S.categories[n - 1].id);
+  if (!S.categories.length) { await notify("No labels yet", 'Create one first with the "+" next to Labels in the sidebar.'); return; }
+  const chosen = await pickLabels(current);
+  if (chosen === null) return;
   try {
     const r = await api(`/api/mailbox/messages/${encodeURIComponent(id)}/labels`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ labels: chosen }) });
     S.messages = r.messages;
     renderRail(); renderList(); openMessage(id);
-  } catch (err) { alert(err.message); }
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+/** Tick the labels to apply. Returns null when the user backs out. */
+function pickLabels(current) {
+  return new Promise((resolve) => {
+    const host = document.createElement("div");
+    host.className = "modal";
+    host.innerHTML = `
+      <div class="mbox" role="dialog" aria-modal="true" aria-label="Labels">
+        <h3>Labels for this message</h3>
+        <div class="mpick">
+          ${S.categories.map((c) => `
+            <label class="mopt">
+              <input type="checkbox" value="${esc(c.id)}" ${current.includes(c.id) ? "checked" : ""} />
+              <span class="dot" style="background:${esc(c.colour)}"></span>${esc(c.name)}
+            </label>`).join("")}
+        </div>
+        <div class="mrowbtns">
+          <button class="ghost sm" data-no>Cancel</button>
+          <button class="mgo" data-yes>Apply</button>
+        </div>
+      </div>`;
+    document.body.appendChild(host);
+    requestAnimationFrame(() => host.classList.add("in"));
+
+    const done = (value) => {
+      host.classList.remove("in");
+      setTimeout(() => host.remove(), 200);
+      document.removeEventListener("keydown", onKey);
+      resolve(value);
+    };
+    const onKey = (e) => { if (e.key === "Escape") done(null); };
+    host.querySelector("[data-yes]").addEventListener("click", () =>
+      done([...host.querySelectorAll("input:checked")].map((i) => i.value)));
+    host.querySelector("[data-no]").addEventListener("click", () => done(null));
+    host.addEventListener("mousedown", (e) => { if (e.target === host) done(null); });
+    document.addEventListener("keydown", onKey);
+  });
 }
 
 init();

@@ -19,7 +19,11 @@ html,body{margin:0;height:100%;color:var(--ink);font-family:var(--sans);-webkit-
 body{display:flex;flex-direction:column;min-height:100vh}
 a{color:var(--ink);text-decoration:none}a:hover{color:var(--accent)}
 .hidden{display:none!important}.muted{color:var(--mute)}.accent{color:var(--accent)}
-.ic{width:18px;height:18px;display:inline-block;vertical-align:middle}
+/* Icons never shrink and never sit on the text baseline — an SVG that keeps
+   its baseline gains a descender's worth of space under it and reads as
+   misaligned next to any label. */
+.ic{width:18px;height:18px;display:inline-block;vertical-align:middle;flex:none}
+.ic,.iconbtn svg,.chanic svg,.pcaret{display:block}
 input,select,button,textarea{font-family:inherit}
 
 .band{display:flex;justify-content:space-between;align-items:center;padding:14px 26px;border-bottom:1px solid var(--line);background:rgba(243,241,234,.9);backdrop-filter:blur(6px);position:sticky;top:0;z-index:6}
@@ -59,23 +63,65 @@ code{background:#e9e6dd;padding:1px 6px;border-radius:5px;font-family:var(--mono
 /* ------------------------------------------------------------ mail client */
 .client{flex:1;display:grid;grid-template-columns:232px 384px 1fr;min-height:0;border-top:1px solid var(--line)}
 .rail{border-right:1px solid var(--line);padding:16px 12px;overflow-y:auto;background:rgba(255,255,255,.5)}
-/* Mailboxes. A company runs several, so the switcher is the top of the rail. */
-.accounts{display:flex;flex-direction:column;gap:2px}
-.arow{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:none;background:none;
-      padding:7px 9px;border-radius:10px;cursor:pointer;color:var(--ink)}
-.arow .ic{width:16px;height:16px;color:var(--mute);flex:none}
-.arow:hover{background:rgba(17,17,17,.04)}
-.arow.active{background:var(--t-blue)}.arow.active .ic{color:var(--accent)}
-.atext{min-width:0;display:flex;flex-direction:column;line-height:1.25}
-.alabel{font-size:12.8px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ahost{font:400 10.5px var(--mono);color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.arow .n{margin-left:auto;font:700 11px var(--mono);color:var(--mute);flex:none}
-.arow .n.bad{background:var(--mal);color:#fff;border-radius:999px;padding:1px 7px}
-.arow .x{flex:none;color:transparent;font-size:14px;line-height:1;padding:0 2px}
-.arow:hover .x{color:var(--mute)}.arow .x:hover{color:var(--mal)}
+/* Mailbox picker. A rail-height list does not survive eight mailboxes, so
+   the switcher collapses to one line and opens a menu. */
+.picker{position:relative;margin-bottom:6px}
+.pbtn,.popt{display:flex;align-items:center;gap:9px;width:100%;text-align:left;cursor:pointer;color:var(--ink)}
+.pbtn{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px 10px;transition:.15s}
+.pbtn:hover{border-color:var(--ink)}
+.picker.open .pbtn{border-color:var(--ink);box-shadow:0 0 0 3px rgba(59,158,232,.14)}
+.pbtn>.ic,.popt>.ic{width:16px;height:16px;color:var(--mute);flex:none}
+.ptext{min-width:0;display:flex;flex-direction:column;line-height:1.28;flex:1}
+.plabel{font-size:12.8px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.psub{font:400 10.5px var(--mono);color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pn{flex:none;font:700 10.5px var(--mono);color:var(--mute)}
+.pn.bad{background:var(--mal);color:#fff;border-radius:999px;padding:2px 7px}
+.pcaret{width:15px;height:15px;flex:none;color:var(--mute);transition:transform .18s ease}
+.picker.open .pcaret{transform:rotate(180deg)}
+
+.pmenu{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:12;background:var(--panel);
+       border:1px solid var(--line);border-radius:13px;padding:5px;box-shadow:0 14px 40px rgba(17,17,17,.16);
+       animation:pmenu .16s cubic-bezier(.2,.8,.3,1)}
+@keyframes pmenu{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+.popt{border:none;background:none;border-radius:9px;padding:8px 9px}
+.popt:hover{background:rgba(17,17,17,.05)}
+.popt.active{background:var(--t-blue)}.popt.active>.ic{color:var(--accent)}
+.popt .x{flex:none;color:transparent;font-size:15px;line-height:1;padding:0 3px}
+.popt:hover .x{color:var(--mute)}.popt .x:hover{color:var(--mal)}
+.popt.add{border-top:1px solid var(--line);border-radius:0 0 9px 9px;margin-top:4px;padding-top:11px}
+.popt.add .plabel{color:var(--accent)}
 .backlink{margin-bottom:18px}
+
+/* ------------------------------------------------------------ own dialogs */
+.modal{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:20px;
+       background:rgba(17,17,17,.32);opacity:0;transition:opacity .18s ease}
+.modal.in{opacity:1}
+.mbox{width:min(400px,100%);background:var(--panel);border:1px solid var(--line);border-radius:17px;
+      padding:20px 21px 17px;box-shadow:0 20px 60px rgba(17,17,17,.25);
+      transform:translateY(10px) scale(.985);transition:transform .18s cubic-bezier(.2,.8,.3,1)}
+.modal.in .mbox{transform:none}
+.mbox h3{margin:0 0 7px;font-size:15.5px;letter-spacing:-.01em}
+.mbox p{margin:0 0 4px;font-size:13px;line-height:1.55;color:var(--mute)}
+.minput{width:100%;margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;
+        font-size:13.5px;outline:none;color:var(--ink);background:#fff}
+.minput:focus{border-color:var(--accent)}
+.mrowbtns{display:flex;justify-content:flex-end;gap:8px;margin-top:17px}
+.mgo{background:var(--ink);color:#fff;border:none;border-radius:999px;padding:8px 18px;
+     font-size:13px;font-weight:600;cursor:pointer}
+.mgo:hover{background:#000}
+.mgo.danger{background:var(--mal)}.mgo.danger:hover{background:#b4463f}
+.mpick{display:flex;flex-direction:column;gap:2px;margin-top:12px;max-height:46vh;overflow:auto}
+.mopt{display:flex;align-items:center;gap:9px;padding:8px 9px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:600}
+.mopt:hover{background:rgba(17,17,17,.05)}
+.mopt input{accent-color:var(--accent);width:15px;height:15px;margin:0}
+.mopt .dot{width:9px;height:9px;border-radius:50%;flex:none}
+@media(prefers-reduced-motion:reduce){.modal,.mbox,.pmenu{transition:none;animation:none}}
 .railsec{display:flex;align-items:center;justify-content:space-between;font-size:10px;text-transform:uppercase;letter-spacing:.09em;font-weight:700;color:var(--mute);padding:12px 10px 6px}
-.mini{width:20px;height:20px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer;color:var(--mute);font-size:13px;line-height:1}
+/* A button sized in pixels will not centre its glyph from font metrics alone:
+   the line box, the default padding and the button's own baseline all pull it
+   off. Grid + place-items is the only thing that reliably centres both. */
+.mini{width:21px;height:21px;padding:0;border-radius:7px;border:1px solid var(--line);background:#fff;
+      cursor:pointer;color:var(--mute);font-size:14px;line-height:1;display:grid;place-items:center}
 .mini:hover{border-color:var(--accent);color:var(--accent)}
 .folders,.chips{display:flex;flex-direction:column;gap:2px}
 .frow{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:9px;cursor:pointer;font-size:13.5px;font-weight:600;color:var(--ink);border:none;background:none;text-align:left;width:100%}
@@ -173,6 +219,50 @@ td{padding:8px;border-bottom:1px solid #f0ede5;vertical-align:top}
 .foot{text-align:center;color:var(--mute);font-size:12.5px;padding:18px 20px 26px;border-top:1px solid var(--line)}
 .foot a{color:var(--mute);text-decoration:underline}.foot a:hover{color:var(--ink)}
 .foot .donate{color:var(--ink);font-weight:600}
+
+/* ------------------------------------------------------------- composer */
+.composebtn{width:100%;justify-content:center;padding:11px 18px;font-size:14px;margin-bottom:6px}
+.ractions{display:flex;gap:7px;margin:14px 0 2px}
+
+.composer{position:fixed;inset:0;z-index:50;display:grid;place-items:end center;padding:0 20px 20px;
+          background:rgba(17,17,17,.28);opacity:0;transition:opacity .2s ease}
+.composer.in{opacity:1}
+.cwin{width:min(660px,100%);max-height:88vh;display:flex;flex-direction:column;background:var(--panel);
+      border:1px solid var(--line);border-radius:18px 18px 0 0;box-shadow:0 -10px 50px rgba(17,17,17,.2);
+      transform:translateY(24px);transition:transform .22s cubic-bezier(.2,.8,.3,1)}
+.composer.in .cwin{transform:none}
+.chead{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;
+       border-bottom:1px solid var(--line);font-size:13.5px;font-weight:700}
+.cfields{padding:4px 16px}
+.cf{display:grid;grid-template-columns:64px 1fr;align-items:center;gap:10px;border-bottom:1px solid #f2efe7}
+.cf>span{font-size:11.5px;font-weight:700;color:var(--mute);text-transform:uppercase;letter-spacing:.06em}
+.cf input,.cf select{border:none;background:none;padding:11px 0;font-size:13.5px;width:100%;outline:none;color:var(--ink)}
+.cbody{flex:1;min-height:200px;resize:vertical;border:none;outline:none;padding:15px 16px;
+       font-size:14px;line-height:1.6;font-family:var(--sans);color:var(--ink);background:none}
+.cfoot{display:flex;align-items:center;gap:9px;padding:12px 16px 15px;border-top:1px solid var(--line);flex-wrap:wrap}
+.cfoot .cta{padding:10px 20px;font-size:14px}
+.cfine{font-size:11.5px;margin-left:auto}
+.cfiles{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 4px}
+.cfile{display:inline-flex;align-items:center;gap:6px;background:var(--t-blue);border-radius:999px;
+       padding:5px 6px 5px 10px;font-size:12px;font-weight:600}
+.cfile .ic{width:13px;height:13px}
+.cfile .sz{color:var(--mute);font:600 10.5px var(--mono)}
+.cfile button{border:none;background:none;cursor:pointer;font-size:14px;line-height:1;color:var(--mute);padding:0 4px}
+.cfile button:hover{color:var(--mal)}
+.cscan{margin:12px 16px 0;border-radius:12px;padding:11px 13px;font-size:12.5px;line-height:1.5}
+.cscan.blocked{background:var(--t-red);border:1px solid #e8c9c4}
+.cscan.warn{background:var(--t-yellow);border:1px solid #e3dcb8}
+.cscan .mono{font-family:var(--mono);font-size:11.5px}
+.cscan div{margin-top:5px}
+.cscan ul{margin:7px 0 5px;padding-left:17px}
+.cscan li{margin-bottom:2px}
+
+/* --------------------------------------------------------------- toasts */
+.toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);z-index:70;
+       background:var(--ink);color:#fff;border-radius:999px;padding:11px 20px;font-size:13px;font-weight:600;
+       box-shadow:0 12px 34px rgba(17,17,17,.26);opacity:0;transition:opacity .2s ease,transform .2s cubic-bezier(.2,.8,.3,1)}
+.toast.in{opacity:1;transform:translate(-50%,0)}
+@media(prefers-reduced-motion:reduce){.toast,.cwin,.composer{transition:none}}
 
 /* -------------------------------------------------------- provider chips */
 .pchips{display:flex;flex-wrap:wrap;gap:6px}

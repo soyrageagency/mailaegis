@@ -59,6 +59,7 @@ export interface ParsedMessage {
   replyTo?: Address;
   returnPath?: Address;
   to: Address[];
+  cc: Address[];
   subject: string;
   date: string;
   messageId: string;
@@ -182,9 +183,12 @@ export interface Analysis {
     from: Address;
     replyTo?: Address;
     to: Address[];
+    cc: Address[];
     subject: string;
     date: string;
     messageId: string;
+    /** The first few kilobytes of the plain-text body, for quoting in a reply. */
+    textPreview: string;
     sizeBytes: number;
     attachmentCount: number;
     urlCount: number;

@@ -87,8 +87,15 @@
     <!-- ========================== MAIL CLIENT ========================== -->
     <div id="client" class="client hidden">
       <aside class="rail">
-        <div class="railsec">Mailboxes <button id="addAcct" class="mini" title="Connect another mailbox">+</button></div>
-        <nav id="accounts" class="accounts"></nav>
+        <button id="compose" class="cta composebtn">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2v-8"/><path d="M17.5 3.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z"/></svg>
+          Compose
+        </button>
+
+        <div id="picker" class="picker">
+          <button id="pickerBtn" class="pbtn" aria-haspopup="listbox" aria-expanded="false"></button>
+          <div id="pickerMenu" class="pmenu hidden" role="listbox"></div>
+        </div>
 
         <div class="railsec" id="foldersHead">Folders</div>
         <nav id="folders" class="folders"></nav>
@@ -114,6 +121,45 @@
       <section class="readpane" id="read">
         <div class="empty muted">Select a message to see its full analysis.</div>
       </section>
+    </div>
+
+    <!-- ============================= COMPOSE ============================ -->
+    <div id="composer" class="composer hidden" role="dialog" aria-label="New message" aria-modal="true">
+      <div class="cwin">
+        <header class="chead">
+          <span id="cwhat">New message</span>
+          <div class="cwintools">
+            <button id="cclose" class="iconbtn" aria-label="Discard">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+          </div>
+        </header>
+
+        <div id="cscan" class="cscan hidden"></div>
+
+        <div class="cfields">
+          <label class="cf"><span>From</span><select id="cfrom"></select></label>
+          <label class="cf"><span>To</span><input id="cto" placeholder="name@partner.example, another@partner.example" autocomplete="off" /></label>
+          <label class="cf" id="cccrow"><span>Cc</span><input id="ccc" autocomplete="off" /></label>
+          <label class="cf" id="cbccrow"><span>Bcc</span><input id="cbcc" autocomplete="off" /></label>
+          <label class="cf"><span>Subject</span><input id="csubject" autocomplete="off" /></label>
+        </div>
+
+        <textarea id="cbody" class="cbody" placeholder="Write your message…"></textarea>
+
+        <div id="cfiles" class="cfiles"></div>
+
+        <footer class="cfoot">
+          <button id="csend" class="cta">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3L10.5 13.5"/><path d="M21 3l-6.8 18-3.7-7.5L3 9.8z"/></svg>
+            Scan &amp; send
+          </button>
+          <button id="cattach" class="ghost sm">Attach files</button>
+          <button id="ccarbon" class="ghost sm">Cc / Bcc</button>
+          <input type="file" id="cfileinput" multiple hidden />
+          <span class="cfine muted">Scanned on the way out — the same engine that scores what arrives.</span>
+        </footer>
+      </div>
     </div>
 
     <footer class="foot">
