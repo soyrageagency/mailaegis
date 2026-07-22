@@ -25,6 +25,30 @@
   },
   "announcements": [
     {
+      "id": "postfix-filter-2026-07",
+      "level": "warn",
+      "title": "Using the old Postfix content filter? Replace it.",
+      "body": "The example filter this README shipped before today did not work and could lose mail: it delivered anything the scanner failed to examine, and its suspicious branch used a sendmail flag that does not exist. integration/postfix-filter.sh replaces it — tested, and it requeues rather than delivering unscanned mail. Nothing to do if you use the API, the CLI or the mail client.",
+      "link": { "label": "The new filter", "url": "https://github.com/soyrageagency/mailaegis/blob/main/integration/postfix-filter.sh" },
+      "starts": "",
+      "ends": "2026-10-31",
+      "minVersion": "",
+      "maxVersion": "",
+      "dismissible": true
+    },
+    {
+      "id": "docker-2026-07",
+      "level": "success",
+      "title": "docker compose up — now with ClamAV included",
+      "body": "Self-hosting no longer means arranging it yourself. One command gives you MailAegis and a live ClamAV, which is the hardest part of getting real attachment scanning working.",
+      "link": { "label": "How", "url": "https://github.com/soyrageagency/mailaegis#-self-host-it-with-docker" },
+      "starts": "",
+      "ends": "2026-10-31",
+      "minVersion": "",
+      "maxVersion": "",
+      "dismissible": true
+    },
+    {
       "id": "welcome-2026-07",
       "level": "info",
       "title": "MailAegis is open source — and free forever.",

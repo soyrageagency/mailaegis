@@ -41,7 +41,8 @@
     "dist",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "integration"
   ],
   "engines": {
     "node": ">=18"
