@@ -29,6 +29,7 @@ import { vtEnabled } from "../core/virustotal.js";
 import { demoMessages } from "../core/demo.js";
 import { readChannel } from "../core/updates.js";
 import { senderLists } from "../core/lists.js";
+import { audit, auditAnalysis, recentEvents } from "../core/audit.js";
 import { MailboxSession } from "../mailbox/session.js";
 import { CategoryStore, THREAT_META } from "../mailbox/categories.js";
 import { PROVIDERS } from "../mailbox/providers.js";
@@ -173,6 +174,17 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
         return json(res, 200, { status: mailbox.getStatus(), messages: mailbox.list() });
       }
 
+      // ---- Audit trail ----------------------------------------------------
+      if (path === "/api/audit" && req.method === "GET") {
+        if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
+        const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit") ?? 200)));
+        return json(res, 200, {
+          events: recentEvents(config, limit),
+          webhook: Boolean(config.webhookUrl),
+          minVerdict: config.auditMinVerdict,
+        });
+      }
+
       // ---- Sender allow / block lists -------------------------------------
       if (path === "/api/lists" && req.method === "GET") {
         return json(res, 200, lists.list());
@@ -185,6 +197,11 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
         try {
           lists.add(kind, String(body.value ?? ""), String(body.note ?? ""));
           logger.info(`policy: ${String(body.value ?? "")} added to the ${kind} list`);
+          audit(config, {
+            action: kind === "blocked" ? "policy.blocked" : "policy.allowed",
+            from: String(body.value ?? ""),
+            detail: String(body.note ?? ""),
+          });
           return json(res, 200, lists.list());
         } catch (err) {
           return json(res, 400, { error: (err as Error).message });
@@ -195,7 +212,9 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
         if (!authorised(req, config)) return json(res, 401, { error: "Unauthorised." });
         const [, , , kindRaw, ...rest] = path.split("/");
         const kind = kindRaw === "allowed" ? "allowed" : "blocked";
-        lists.remove(kind, decodeURIComponent(rest.join("/")));
+        const removed = decodeURIComponent(rest.join("/"));
+        lists.remove(kind, removed);
+        audit(config, { action: "policy.removed", from: removed, detail: `removed from the ${kind} list` });
         return json(res, 200, lists.list());
       }
 
@@ -294,6 +313,20 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
           logger.info(result.blocked
             ? `outbound blocked (${result.analysis.score}/100) from ${account}`
             : `sent ${result.analysis.id} from ${account} to ${result.accepted.length} recipient(s)${result.simulated ? " (simulated)" : ""}`);
+
+          // Every outbound decision is recorded, including the overrides —
+          // a refusal that can be waived without a trace is not a control.
+          audit(config, {
+            action: result.blocked ? "outbound.blocked" : body.force === true ? "outbound.overridden" : "outbound.sent",
+            id: result.analysis.id,
+            verdict: result.analysis.verdict,
+            score: result.analysis.score,
+            from: draft.from,
+            to: [...draft.to, ...draft.cc, ...draft.bcc].slice(0, 20),
+            account,
+            rules: result.analysis.findings.filter((f) => f.score > 0).slice(0, 12).map((f) => f.rule),
+            detail: result.simulated ? "demo mailbox — nothing was transmitted" : result.reason,
+          });
           return json(res, result.blocked ? 422 : 200, { ...result, status: mailbox.getStatus() });
         } catch (err) {
           return json(res, 502, { error: (err as Error).message });
@@ -313,6 +346,7 @@ export function startServer(config: AppConfig, logger: Logger): Promise<void> {
         if (raw.length === 0) return json(res, 400, { error: "Empty body: POST the raw RFC-822 message." });
         const analysis = await analyzeRaw(raw, config);
         logger.info(`analysed ${analysis.id}: ${analysis.verdict} (${analysis.score})`);
+        auditAnalysis(config, analysis);
         return json(res, 200, analysis);
       }
 

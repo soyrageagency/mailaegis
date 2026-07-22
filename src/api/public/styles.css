@@ -443,6 +443,16 @@ body.dark .mrow.active,body.dark .mrow.picked,body.dark .frow.active,body.dark .
   .cta:active,.ghost:active,.mgo:active,.chanbtn:active{transform:none}
 }
 
+.iconbtn.off{opacity:.42}
+.sigbox{font-family:var(--sans);line-height:1.5;resize:vertical;min-height:120px}
+.toast.undo{display:flex;align-items:center;gap:10px;padding:10px 12px 10px 18px}
+.toast.undo .usec{font:700 11px var(--mono);background:rgba(255,255,255,.16);border-radius:999px;
+                  min-width:22px;text-align:center;padding:3px 0}
+.toast.undo .uundo{background:#fff;color:var(--ink);border:none;border-radius:999px;
+                   padding:6px 14px;font-size:12.5px;font-weight:700;cursor:pointer}
+.toast.undo .uundo:hover{background:#eee}
+.toast.bad{background:var(--mal)}
+
 /* --------------------------------------------------------------- toasts */
 .toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);z-index:70;
        background:var(--ink);color:#fff;border-radius:999px;padding:11px 20px;font-size:13px;font-weight:600;

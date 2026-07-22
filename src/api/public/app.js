@@ -351,6 +351,8 @@ async function init() {
   wireComposer();
   wireShortcuts();
   wireResponsive();
+  wireAutoRefresh();
+  $("#refreshBtn").innerHTML = icon("refresh");
   renderSaved();
   applyTheme();
   applySound();
@@ -1167,6 +1169,23 @@ function openComposer(mode, analysis, item) {
     }
   }
 
+  // The signature goes above any quoted text, which is where people read.
+  const sig = signatureFor(preferred);
+  if (sig) $("#cbody").value = mode === "new" ? `\n\n${sig}` : `\n\n${sig}\n${$("#cbody").value}`;
+
+  // Offer the last draft rather than restoring it silently over a reply.
+  if (mode === "new") {
+    const draft = loadDraft();
+    if (draft && (draft.to || draft.subject || draft.text.trim())) {
+      dialog({
+        title: "Continue your last draft?",
+        body: draft.subject ? `"${draft.subject}"` : "An unsent message from earlier.",
+        confirmLabel: "Continue it",
+        cancelLabel: "Start fresh",
+      }).then((yes) => { if (yes) restoreDraft({ ...draft, attachments: [] }, true); else clearDraft(); });
+    }
+  }
+
   $("#cwhat").textContent = mode === "new" ? "New message" : mode === "forward" ? "Forward" : mode === "replyAll" ? "Reply to all" : "Reply";
   $("#composer").classList.remove("hidden");
   requestAnimationFrame(() => $("#composer").classList.add("in"));
@@ -1175,8 +1194,77 @@ function openComposer(mode, analysis, item) {
 }
 
 function closeComposer() {
+  saveDraftNow();
   $("#composer").classList.remove("in");
   setTimeout(() => $("#composer").classList.add("hidden"), 340);
+}
+
+// ------------------------------------------------------ signatures & drafts
+const SIG_KEY = "mailaegis.signatures";
+const DRAFT_KEY = "mailaegis.draft";
+
+function signatures() {
+  try { return JSON.parse(localStorage.getItem(SIG_KEY) || "{}"); } catch { return {}; }
+}
+
+function signatureFor(accountId) {
+  return signatures()[accountId] || "";
+}
+
+async function editSignature() {
+  const account = $("#cfrom").value;
+  if (!account) { toast("Connect a mailbox first."); return; }
+  const current = signatureFor(account);
+  const next = await dialog({
+    title: "Signature",
+    body: `Appended to new messages sent from ${account}. Replies get it too, above the quoted text.`,
+    wide: true,
+    confirmLabel: "Save",
+    html: `<textarea class="minput sigbox" id="sigBox" rows="6" placeholder="Ana López\nHead of Finance · Corp\n+34 600 000 000">${esc(current)}</textarea>`,
+    collect: (host) => host.querySelector("#sigBox").value,
+  });
+  if (next === null) return;
+  const all = signatures();
+  if (next.trim()) all[account] = next; else delete all[account];
+  try { localStorage.setItem(SIG_KEY, JSON.stringify(all)); } catch {}
+  toast(next.trim() ? "Signature saved." : "Signature cleared.");
+}
+
+/**
+ * Autosaved draft.
+ *
+ * One draft, not many: a mail client that silently accumulates half-written
+ * messages you never see again is worse than one that keeps the last.
+ */
+let draftTimer = null;
+
+function saveDraftNow() {
+  const d = collectDraft();
+  const empty = !d.to && !d.cc && !d.bcc && !d.subject && !d.text.trim() && !d.attachments.length;
+  try {
+    if (empty) localStorage.removeItem(DRAFT_KEY);
+    // Attachment bytes are deliberately not persisted — a few megabytes of
+    // base64 in localStorage is how you break a browser profile.
+    else localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...d, attachments: [], at: Date.now() }));
+  } catch {}
+}
+
+function scheduleDraftSave() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(saveDraftNow, 900);
+}
+
+function loadDraft() {
+  try {
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null");
+    // A week-old draft is forgotten scaffolding, not work in progress.
+    if (!d || Date.now() - (d.at || 0) > 7 * 24 * 60 * 60 * 1000) return null;
+    return d;
+  } catch { return null; }
+}
+
+function clearDraft() {
+  try { localStorage.removeItem(DRAFT_KEY); } catch {}
 }
 
 /**
@@ -1240,11 +1328,94 @@ function readAsBase64(file) {
   });
 }
 
+/*
+ * Undo send.
+ *
+ * The message is held for a few seconds before it is submitted, which is the
+ * only moment a mistake is still cheap. Kept short — long enough to catch the
+ * wrong recipient, short enough that nobody wonders whether it went.
+ */
+const UNDO_MS = 6000;
+let pendingSend = null;
+
+function undoBar(seconds, onUndo) {
+  const el = document.createElement("div");
+  el.className = "toast undo";
+  el.innerHTML = `<span class="usec">${seconds}</span> Sending… <button class="uundo">Undo</button>`;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("in"));
+
+  let left = seconds;
+  const tick = setInterval(() => {
+    left -= 1;
+    const n = el.querySelector(".usec");
+    if (n) n.textContent = String(Math.max(0, left));
+  }, 1000);
+
+  el.querySelector(".uundo").addEventListener("click", () => { clearInterval(tick); onUndo(); });
+  return () => { clearInterval(tick); el.classList.remove("in"); setTimeout(() => el.remove(), 250); };
+}
+
 async function sendComposed() {
+  // A second press while the undo window is open means "go now".
+  if (pendingSend) { pendingSend.now(); return; }
+
+  const undoOn = (() => { try { return localStorage.getItem("mailaegis.undo") !== "off"; } catch { return true; } })();
+  if (undoOn && !C.force) {
+    closeComposer();
+    const draft = collectDraft();
+    let cancelled = false;
+    const dismiss = undoBar(UNDO_MS / 1000, () => {
+      cancelled = true;
+      pendingSend = null;
+      dismiss();
+      restoreDraft(draft);
+      toast("Held back. Nothing was sent.");
+    });
+    const go = () => {
+      if (cancelled) return;
+      pendingSend = null;
+      dismiss();
+      restoreDraft(draft, true);
+      reallySend();
+    };
+    const timer = setTimeout(go, UNDO_MS);
+    pendingSend = { now: () => { clearTimeout(timer); go(); } };
+    return;
+  }
+  return reallySend();
+}
+
+/** Snapshot the composer, so undo can put it back exactly as it was. */
+function collectDraft() {
+  return {
+    account: $("#cfrom").value, to: $("#cto").value, cc: $("#ccc").value, bcc: $("#cbcc").value,
+    subject: $("#csubject").value, text: $("#cbody").value,
+    attachments: C.attachments.slice(), reply: C.reply, carbon: !$("#cccrow").classList.contains("hidden"),
+  };
+}
+
+function restoreDraft(d, silent = false) {
+  $("#cfrom").value = d.account; $("#cto").value = d.to; $("#ccc").value = d.cc; $("#cbcc").value = d.bcc;
+  $("#csubject").value = d.subject; $("#cbody").value = d.text;
+  C.attachments = d.attachments; C.reply = d.reply;
+  setCarbon(d.carbon);
+  renderAttachments();
+  if (!silent) {
+    $("#composer").classList.remove("hidden");
+    requestAnimationFrame(() => $("#composer").classList.add("in"));
+  }
+}
+
+async function reallySend() {
   const btn = $("#csend");
   btn.disabled = true;
   const original = btn.innerHTML;
   btn.innerHTML = "Scanning…";
+  // The window may already be closed by the undo flow; put it back so the
+  // outbound-scan verdict has somewhere to appear if it refuses.
+  $("#composer").classList.remove("hidden");
+  requestAnimationFrame(() => $("#composer").classList.add("in"));
   try {
     const payload = {
       account: $("#cfrom").value,
@@ -1274,6 +1445,7 @@ async function sendComposed() {
     chime(body.analysis.verdict === "clean" ? "sent" : "warn");
     // The letter flies while the list refreshes behind it.
     const flight = playSent(body.simulated ? "Scanned" : "Sent");
+    clearDraft();
     S.status = body.status;
     await loadMessages();
     renderRail(); renderList();
@@ -1297,6 +1469,12 @@ function wireComposer() {
   $("#csend").addEventListener("click", sendComposed);
   $("#ccarbon").addEventListener("click", () => setCarbon($("#cccrow").classList.contains("hidden")));
   $("#cattach").addEventListener("click", () => $("#cfileinput").click());
+  $("#csig").addEventListener("click", editSignature);
+  for (const id of ["#cto", "#ccc", "#cbcc", "#csubject", "#cbody"]) {
+    $(id).addEventListener("input", scheduleDraftSave);
+  }
+  // A tab closed mid-message should not lose it.
+  addEventListener("beforeunload", () => { if (!$("#composer").classList.contains("hidden")) saveDraftNow(); });
   $("#cfileinput").addEventListener("change", async (e) => {
     for (const file of [...e.target.files]) {
       C.attachments.push({ filename: file.name, contentType: file.type || "application/octet-stream", size: file.size, base64: await readAsBase64(file) });
@@ -1492,6 +1670,68 @@ function wireShortcuts() {
       default: break;
     }
   });
+}
+
+// ------------------------------------------------------------ auto-refresh
+/*
+ * Re-fetches the open folder on a timer, and says something only when the
+ * result actually changed. Paused while the tab is hidden, while the composer
+ * is open and while a dialog is up: refreshing the list under someone who is
+ * mid-action is how you lose their place.
+ */
+const REFRESH_MS = 120000;
+let refreshTimer = null;
+let refreshing = false;
+
+function autoRefreshOn() {
+  try { return localStorage.getItem("mailaegis.autorefresh") !== "off"; } catch { return true; }
+}
+
+async function refreshNow(quiet = false) {
+  if (refreshing || !S.status || !S.status.connected) return;
+  if (!$("#composer").classList.contains("hidden") || document.querySelector(".modal")) return;
+  refreshing = true;
+  try {
+    const seen = new Set(S.messages.map((m) => m.id));
+    const account = activeAccount();
+    if (account) {
+      // Re-selecting the current folder is what actually re-fetches from IMAP.
+      S.status = await api("/api/mailbox/select", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account: account.id, folder: account.mailbox }),
+      });
+    }
+    await loadMessages();
+    renderRail(); renderList();
+
+    const fresh = S.messages.filter((m) => !seen.has(m.id));
+    if (fresh.length && !quiet) {
+      const worst = fresh.some((m) => m.verdict === "malicious") ? "malicious"
+        : fresh.some((m) => m.verdict === "suspicious") ? "suspicious" : "clean";
+      chime(worst === "clean" ? "clean" : worst === "suspicious" ? "warn" : "alert");
+      toast(`${fresh.length} new message${fresh.length > 1 ? "s" : ""}${worst !== "clean" ? ` — ${worst}` : ""}.`,
+        worst === "malicious" ? "bad" : "");
+    }
+  } catch { /* a failed refresh is not worth interrupting anyone over */ }
+  finally { refreshing = false; }
+}
+
+function wireAutoRefresh() {
+  const start = () => {
+    clearInterval(refreshTimer);
+    if (autoRefreshOn()) refreshTimer = setInterval(() => { if (!document.hidden) refreshNow(); }, REFRESH_MS);
+  };
+  start();
+  $("#refreshBtn").addEventListener("click", () => refreshNow(true).then(() => toast("Refreshed.")));
+  $("#refreshBtn").addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    try { localStorage.setItem("mailaegis.autorefresh", autoRefreshOn() ? "off" : "on"); } catch {}
+    toast(autoRefreshOn() ? "Auto-refresh on — every two minutes." : "Auto-refresh off.");
+    $("#refreshBtn").classList.toggle("off", !autoRefreshOn());
+    start();
+  });
+  $("#refreshBtn").classList.toggle("off", !autoRefreshOn());
+  $("#refreshBtn").title = "Refresh now · right-click to toggle auto-refresh";
 }
 
 // ------------------------------------------------------------------- PWA

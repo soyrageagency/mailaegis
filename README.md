@@ -315,6 +315,34 @@ deliberate press sends it anyway.
 | 🧾 **Raw source** | Headers, body or the lot, in a viewer — nobody should have to take the tool's word for a header |
 | 📋 **Copy IOCs** | Hashes, URLs, hosts and the originating IP, **defanged** (`hxxps://`, `evil[.]example`) and ready to paste into a ticket |
 | 🚫 **Block / allow senders** | Per address or per domain, with a note explaining why |
+| ↩️ **Undo send** | Six seconds to catch the wrong recipient — the only moment a mistake is still cheap |
+| ✍️ **Signatures & drafts** | One signature per mailbox; the composer autosaves and offers the draft back |
+| 🔄 **Auto-refresh** | Every two minutes, with a cue that tells you whether what arrived is clean or not |
+| 📜 **Audit trail** | Every decision recorded, and forwarded to your SIEM if you want it |
+
+### Audit trail & SIEM
+
+Every decision worth defending later — a message quarantined, an outbound
+message held back, a **send that overrode that refusal**, a sender added to a
+list — is appended to `audit.jsonl` and, if you set `MAILAEGIS_WEBHOOK_URL`,
+POSTed live to Splunk, Sentinel, Wazuh or an n8n flow.
+
+```jsonc
+{"at":"2026-07-22T14:02:11.318Z","action":"outbound.blocked","id":"MA-20260722-a1b2c3",
+ "verdict":"malicious","score":100,"from":"ana@corp.example","to":["victim@partner.example"],
+ "rules":["blocked-extension","double-extension"],"product":"MailAegis","version":"1.2.0"}
+```
+
+Three deliberate constraints:
+
+- **It never blocks.** The write is one small line; the webhook is
+  fire-and-forget with a short timeout and backs off after repeated failures. A
+  SIEM that is down must not stop mail from being analysed.
+- **It never carries message content.** Subjects, bodies and attachments stay
+  out of it — rule *names* travel, the evidence they matched on does not. An
+  audit trail is a record of decisions, not a second copy of everyone's mail
+  sitting in a log directory with different permissions.
+- **It is append-only and rotated by size**, so it cannot quietly fill a disk.
 
 ### About that allow list
 
@@ -443,6 +471,9 @@ All configuration is environment variables (a local `.env` is loaded automatical
 | `MAILAEGIS_HOST` / `_PORT` | `127.0.0.1` / `4850` | API & UI bind address. |
 | `MAILAEGIS_API_TOKEN` | — | Require a bearer token on the API. |
 | `MAILAEGIS_OUT_DIR` | `./reports` | Where reports and labels are written. |
+| `MAILAEGIS_WEBHOOK_URL` | — | POST every audit event to your SIEM or automation flow (Splunk, Sentinel, Wazuh, n8n). |
+| `MAILAEGIS_WEBHOOK_TOKEN` | — | Sent as `Authorization: Bearer …` with each POST. |
+| `MAILAEGIS_AUDIT_MIN_VERDICT` | `suspicious` | Lowest verdict worth recording: `clean`, `suspicious` or `malicious`. |
 | `MAILAEGIS_UPDATE_CHECK` | `true` | Poll the [announcement channel](channel/). `false` makes **no outbound request at all** — set it on air-gapped installs. |
 | `MAILAEGIS_UPDATE_FEED` | GitHub raw | Point at your own JSON to broadcast to your own fleet. |
 | `MAILAEGIS_UPDATE_TTL_MIN` | `360` | How long a fetched feed is cached. |

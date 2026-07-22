@@ -408,6 +408,64 @@ await new Promise((r) => setTimeout(r, 150));
   fake.close();
 }
 
+// ---- Audit trail and the SIEM webhook ---------------------------------------
+{
+  const http = await import("node:http");
+  const { audit, auditAnalysis, recentEvents, resetWebhookState } = await import("../dist/core/audit.js");
+
+  const AUDIT_DIR = "./.smoke-audit";
+  rmSync(AUDIT_DIR, { recursive: true, force: true });
+
+  // A fake SIEM that records what it was sent.
+  const received = [];
+  const sink = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", () => {
+      received.push({ auth: req.headers.authorization || "", body });
+      res.writeHead(204); res.end();
+    });
+  });
+  await new Promise((r) => sink.listen(0, "127.0.0.1", r));
+  const sinkUrl = `http://127.0.0.1:${sink.address().port}/events`;
+
+  resetWebhookState();
+  const auditConfig = { ...config, outDir: AUDIT_DIR, webhookUrl: sinkUrl, webhookToken: "s3cret", auditMinVerdict: "suspicious" };
+
+  auditAnalysis(auditConfig, byId["bec-ceo-fraud"]);
+  auditAnalysis(auditConfig, byId["clean-invoice"]);
+  audit(auditConfig, { action: "policy.blocked", from: "@rival.example", detail: "test" });
+
+  const events = recentEvents(auditConfig, 50);
+  ok("audit: records a malicious verdict", events.some((e) => e.action === "message.analysed" && e.verdict === "malicious"));
+  ok("audit: skips clean mail below the threshold", !events.some((e) => e.verdict === "clean"));
+  ok("audit: records policy changes", events.some((e) => e.action === "policy.blocked" && e.from === "@rival.example"));
+  ok("audit: newest first", events[0].action === "policy.blocked");
+  ok("audit: stamps the product and version", events.every((e) => e.product === "MailAegis" && typeof e.version === "string"));
+
+  // The trail is a record of decisions, not a second copy of everyone's mail.
+  const raw = readFileSync(`${AUDIT_DIR}/audit.jsonl`, "utf8");
+  const becSubject = byId["bec-ceo-fraud"].message.subject;
+  ok("audit: never carries the subject or body", !raw.includes(becSubject) && !raw.includes("bank account details"), becSubject);
+  ok("audit: carries rule names, not their evidence", /"rules":\["/.test(raw) && !raw.includes("m.torres.ceo@gmail.com\",\"evidence"));
+
+  // Give the fire-and-forget POSTs a moment to land.
+  await new Promise((r) => setTimeout(r, 700));
+  ok("siem: forwards events to the webhook", received.length >= 2, `${received.length} received`);
+  ok("siem: sends the bearer token", received.every((r) => r.auth === "Bearer s3cret"));
+  ok("siem: the payload is the event", (() => { try { return JSON.parse(received[0].body).action === "message.analysed"; } catch { return false; } })());
+
+  // An unreachable endpoint must never throw or block.
+  resetWebhookState();
+  let blew = false;
+  try { audit({ ...auditConfig, webhookUrl: "http://127.0.0.1:1/nope" }, { action: "policy.removed", from: "x" }); }
+  catch { blew = true; }
+  ok("siem: an unreachable endpoint is survivable", !blew);
+
+  sink.close();
+  rmSync(AUDIT_DIR, { recursive: true, force: true });
+}
+
 // ---- Sender lists: the safety property is the whole point -------------------
 {
   const { entryMatches, normaliseEntry, senderIsProven } = await import("../dist/core/lists.js");

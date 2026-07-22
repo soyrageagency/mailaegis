@@ -90,6 +90,13 @@ export interface AppConfig {
   /** How many of the most recent messages to fetch. */
   readonly imapFetchLimit: number;
 
+  /** Forward audit events to a SIEM or automation endpoint. Empty disables it. */
+  readonly webhookUrl: string;
+  /** Optional bearer token sent with each webhook POST. */
+  readonly webhookToken: string;
+  /** Lowest verdict worth recording: clean | suspicious | malicious. */
+  readonly auditMinVerdict: "clean" | "suspicious" | "malicious";
+
   /** Poll the update & announcement channel. False = never any outbound call. */
   readonly updateCheck: boolean;
   /** Which feed to poll — re-point it at an intranet copy to address a fleet. */
@@ -150,6 +157,12 @@ export function loadConfig(): AppConfig {
     imapTls: flag("IMAP_TLS", true),
     imapMailbox: str("IMAP_MAILBOX", "INBOX"),
     imapFetchLimit: num("IMAP_FETCH_LIMIT", 25),
+
+    webhookUrl: str("MAILAEGIS_WEBHOOK_URL"),
+    webhookToken: str("MAILAEGIS_WEBHOOK_TOKEN"),
+    auditMinVerdict: (["clean", "suspicious", "malicious"] as const).includes(str("MAILAEGIS_AUDIT_MIN_VERDICT", "suspicious").toLowerCase() as "clean")
+      ? (str("MAILAEGIS_AUDIT_MIN_VERDICT", "suspicious").toLowerCase() as "clean" | "suspicious" | "malicious")
+      : "suspicious",
 
     updateCheck: flag("MAILAEGIS_UPDATE_CHECK", true),
     updateFeed: str("MAILAEGIS_UPDATE_FEED", "https://raw.githubusercontent.com/soyrageagency/mailaegis/main/channel/updates.json"),
