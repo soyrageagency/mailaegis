@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MailAegis · Corporate Email Threat Analyzer by SoyRage Agency</title>
+    <!--
+      MailAegis — Corporate Email Threat Analyzer · web UI
+      Crafted by SoyRage Agency — https://soyrage.es/
+      Attribution must remain intact (see LICENSE).
+    -->
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="band">
+      <div class="brand">
+        <span class="mark"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l8.5 3.6V11c0 5-3.7 8.4-8.5 10C7.2 19.4 3.5 16 3.5 11V6.1z"/><path d="M7.5 9.5l7 5M14.5 9.5l-7 5"/></svg></span>
+        <span class="logo">Mail<span class="accent">Aegis</span></span>
+        <span class="sep">/</span>
+        <span class="title">Corporate Email Threat Analyzer</span>
+      </div>
+      <div class="src">
+        <span id="engines">—</span>
+        <span id="demo" class="badge hidden">DEMO</span>
+        <button id="analyseFile" class="ghost sm hidden">Analyse a file</button>
+        <button id="disconnect" class="ghost sm hidden">Disconnect</button>
+      </div>
+    </header>
+
+    <!-- ============================ CONNECT ============================ -->
+    <main id="connect" class="wrap">
+      <section class="hero">
+        <h1>Your inbox, with an <span class="accent">antivirus layer</span>.</h1>
+        <p>Connect your corporate mailbox over IMAP and MailAegis reads it like a mail client — folders, senders, subjects — while scoring every message: SPF/DKIM/DMARC, <b>VirusTotal</b> reputation, <b>ClamAV</b> content scanning and its own phishing/BEC heuristics.</p>
+
+        <div class="connectgrid">
+          <form id="form" class="cform panel">
+            <h2>Connect a mailbox</h2>
+            <div class="row"><label>IMAP server</label><input name="host" placeholder="imap.corp.example" autocomplete="off" /></div>
+            <div class="row two">
+              <div><label>Port</label><input name="port" value="993" inputmode="numeric" /></div>
+              <div><label>TLS</label><select name="tls"><option value="true">Implicit TLS (993)</option><option value="false">Plain (testing only)</option></select></div>
+            </div>
+            <div class="row"><label>User</label><input name="user" placeholder="security@corp.example" autocomplete="username" /></div>
+            <div class="row"><label>Password</label><input name="password" type="password" placeholder="••••••••" autocomplete="current-password" /></div>
+            <div class="row two">
+              <div><label>Folder</label><input name="mailbox" value="INBOX" /></div>
+              <div><label>Fetch</label><input name="limit" value="25" inputmode="numeric" /></div>
+            </div>
+            <button type="submit" class="cta full"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg> Connect &amp; scan</button>
+            <p class="fine muted">Messages are fetched with <code>BODY.PEEK</code> — nothing is marked as read. Credentials stay in this process and are never written to disk.</p>
+          </form>
+
+          <div class="cside">
+            <div class="panel try">
+              <h2>No mailbox handy?</h2>
+              <p class="muted">Open a simulated corporate inbox with five real-world messages — a clean invoice, a newsletter, CEO fraud, credential phishing and a malware attachment.</p>
+              <button id="tryDemo" class="ghost full">Open the demo mailbox</button>
+            </div>
+            <div class="panel try">
+              <h2>Just one message?</h2>
+              <p class="muted">Drop an <code>.eml</code> file and get a full verdict without connecting anything.</p>
+              <input type="file" id="file" accept=".eml,message/rfc822,text/plain" hidden />
+              <button id="pick" class="ghost full">Analyse an .eml file</button>
+            </div>
+          </div>
+        </div>
+        <div id="connectError" class="cerror hidden"></div>
+        <div id="loading" class="loading hidden">Connecting &amp; scanning…</div>
+      </section>
+    </main>
+
+    <!-- ========================== MAIL CLIENT ========================== -->
+    <div id="client" class="client hidden">
+      <aside class="rail">
+        <div class="acct"><div class="who" id="acctUser">—</div><div class="host muted" id="acctHost">—</div></div>
+
+        <div class="railsec">Folders</div>
+        <nav id="folders" class="folders"></nav>
+
+        <div class="railsec">Threats</div>
+        <nav id="threats" class="chips"></nav>
+
+        <div class="railsec">Labels <button id="newLabel" class="mini" title="New label">+</button></div>
+        <nav id="labels" class="chips"></nav>
+      </aside>
+
+      <section class="listpane">
+        <div class="listtools">
+          <span class="qwrap">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+            <input id="q" class="q" placeholder="Search sender, subject or body…" autocomplete="off" />
+          </span>
+          <span id="listCount" class="muted"></span>
+        </div>
+        <div id="list" class="list"></div>
+      </section>
+
+      <section class="readpane" id="read">
+        <div class="empty muted">Select a message to see its full analysis.</div>
+      </section>
+    </div>
+
+    <footer class="foot">
+      Crafted by <a href="https://soyrage.es/" target="_blank" rel="noreferrer">SoyRage Agency</a> · soyrage.es ·
+      <a class="donate" href="https://www.paypal.com/paypalme/soyrageagency" target="_blank" rel="noreferrer">Support</a> ·
+      Need this wired into your mail gateway? <a href="https://soyrage.es/" target="_blank" rel="noreferrer">Talk to us</a>.
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

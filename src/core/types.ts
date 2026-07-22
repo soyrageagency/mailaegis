@@ -1,0 +1,156 @@
+/**
+ * Core domain model for a message under analysis.
+ *
+ * Part of MailAegis — Corporate Email Threat Analyzer.
+ * Crafted by SoyRage Agency — https://soyrage.es/
+ * Licensed under the SoyRage Attribution License (see LICENSE).
+ */
+
+/** A parsed e-mail address with its optional display name. */
+export interface Address {
+  /** Display name as written in the header ("Finance Dept"). */
+  name: string;
+  /** Normalised address ("ops@corp.example"). Empty when unparseable. */
+  address: string;
+  /** Lower-cased domain part. */
+  domain: string;
+}
+
+/** An extracted attachment. */
+export interface Attachment {
+  filename: string;
+  /** Declared MIME type. */
+  contentType: string;
+  /** Decoded size in bytes. */
+  size: number;
+  /** SHA-256 of the decoded content (hex) — the VirusTotal lookup key. */
+  sha256: string;
+  /** Lower-cased final extension, without the dot. */
+  extension: string;
+  /** Decoded bytes (kept in memory for scanning; never written to disk). */
+  content: Buffer;
+}
+
+/** A URL found in the message body. */
+export interface UrlRef {
+  url: string;
+  /** Lower-cased host. */
+  host: string;
+  /** The anchor text, when the URL came from an HTML link. */
+  text?: string;
+}
+
+/** Result of the published e-mail authentication checks. */
+export interface AuthResults {
+  spf: "pass" | "fail" | "softfail" | "neutral" | "none";
+  dkim: "pass" | "fail" | "none";
+  dmarc: "pass" | "fail" | "none";
+  /** True when the envelope/From domains disagree. */
+  alignmentMismatch: boolean;
+}
+
+/** A fully parsed message. */
+export interface ParsedMessage {
+  /** All headers, lower-cased keys → raw values (last wins for duplicates). */
+  headers: Record<string, string>;
+  /** Every Received: header, oldest last. */
+  received: string[];
+  from: Address;
+  replyTo?: Address;
+  returnPath?: Address;
+  to: Address[];
+  subject: string;
+  date: string;
+  messageId: string;
+  /** text/plain body, decoded. */
+  text: string;
+  /** text/html body, decoded. */
+  html: string;
+  attachments: Attachment[];
+  urls: UrlRef[];
+  /** Total raw size of the message in bytes. */
+  rawSize: number;
+}
+
+/** How serious a finding is. */
+export type Severity = "info" | "low" | "medium" | "high" | "critical";
+
+/** One thing the analysis noticed. */
+export interface Finding {
+  /** Stable rule id, e.g. "display-name-spoof". */
+  rule: string;
+  severity: Severity;
+  /** Human title. */
+  title: string;
+  /** What exactly was seen. */
+  detail: string;
+  /** Points contributed to the risk score. */
+  score: number;
+  /** Which subsystem raised it. */
+  source: "heuristics" | "auth" | "virustotal" | "clamav";
+  /** Optional evidence (filename, URL, hash…). */
+  evidence?: string;
+}
+
+/** A VirusTotal lookup outcome for one file hash or URL. */
+export interface VtResult {
+  /** The hash or URL that was looked up. */
+  target: string;
+  kind: "file" | "url";
+  /** True when VirusTotal had never seen it. */
+  unknown: boolean;
+  malicious: number;
+  suspicious: number;
+  harmless: number;
+  undetected: number;
+  /** Names of the engines that flagged it (first few). */
+  detections: string[];
+  /** Permalink for an analyst. */
+  link?: string;
+  /** Set when the lookup failed. */
+  error?: string;
+}
+
+/** A ClamAV scan outcome for one attachment. */
+export interface ClamResult {
+  filename: string;
+  infected: boolean;
+  /** Signature name reported by clamd. */
+  signature?: string;
+  error?: string;
+}
+
+/** Overall verdict. */
+export type Verdict = "clean" | "suspicious" | "malicious";
+
+/** The complete analysis of one message. */
+export interface Analysis {
+  id: string;
+  analysedAt: string;
+  /** True when VirusTotal/ClamAV verdicts were simulated. */
+  demo: boolean;
+  verdict: Verdict;
+  /** 0–100 risk score. */
+  score: number;
+  /** One-line explanation. */
+  summary: string;
+  message: {
+    from: Address;
+    replyTo?: Address;
+    to: Address[];
+    subject: string;
+    date: string;
+    messageId: string;
+    sizeBytes: number;
+    attachmentCount: number;
+    urlCount: number;
+  };
+  auth: AuthResults;
+  findings: Finding[];
+  attachments: Array<Omit<Attachment, "content">>;
+  urls: UrlRef[];
+  virustotal: VtResult[];
+  clamav: ClamResult[];
+  /** Which engines actually ran (for honest evidence). */
+  engines: Array<{ name: string; ran: boolean; note: string }>;
+}

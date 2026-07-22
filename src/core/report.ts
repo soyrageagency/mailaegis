@@ -1,0 +1,227 @@
+/**
+ * Analysis reports — console, JSON, Markdown and a branded printable HTML.
+ *
+ * Part of MailAegis — Corporate Email Threat Analyzer.
+ * Crafted by SoyRage Agency — https://soyrage.es/
+ * Licensed under the SoyRage Attribution License (see LICENSE).
+ */
+
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { BRAND, THEME } from "../branding.js";
+import type { AppConfig } from "../config.js";
+import { icon } from "./icons.js";
+import type { Analysis, Severity, Verdict } from "./types.js";
+
+const VERDICT_COLOR: Record<Verdict, string> = { clean: "#3a8f5c", suspicious: "#b8892a", malicious: "#c8524a" };
+const VERDICT_TINT: Record<Verdict, string> = { clean: "#dcebdf", suspicious: "#f0ebcf", malicious: "#f1ddd9" };
+const SEV_COLOR: Record<Severity, string> = { info: "#8b8b86", low: "#6b8fb0", medium: "#b8892a", high: "#c9722a", critical: "#c8524a" };
+
+export const esc = (s: string): string =>
+  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+
+/** Human bytes. */
+export function bytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const e = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
+  return `${(n / 1024 ** e).toFixed(e === 0 ? 0 : 1)} ${units[e]}`;
+}
+
+/** Paths written for one analysis. */
+export interface ReportPaths { dir: string; html: string; json: string; markdown: string }
+
+/** Persist an analysis as HTML + JSON + Markdown. */
+export function writeReports(analysis: Analysis, config: AppConfig): ReportPaths {
+  const dir = resolve(config.outDir);
+  mkdirSync(dir, { recursive: true });
+  const paths: ReportPaths = {
+    dir,
+    html: join(dir, `${analysis.id}.html`),
+    json: join(dir, `${analysis.id}.json`),
+    markdown: join(dir, `${analysis.id}.md`),
+  };
+  writeFileSync(paths.json, JSON.stringify(analysis, null, 2));
+  writeFileSync(paths.html, renderHtml(analysis));
+  writeFileSync(paths.markdown, renderMarkdown(analysis));
+  return paths;
+}
+
+// ---- Console ----------------------------------------------------------------
+
+/** A compact, colourful verdict block for the terminal. */
+export function consoleSummary(a: Analysis): string {
+  const C = { r: "\x1b[0m", d: "\x1b[2m", b: "\x1b[1m", green: "\x1b[32m", amber: "\x1b[33m", red: "\x1b[31m", blue: "\x1b[38;5;39m" };
+  const colour = a.verdict === "clean" ? C.green : a.verdict === "suspicious" ? C.amber : C.red;
+  const lines = [
+    `  ${colour}${C.b}${a.verdict.toUpperCase()}${C.r}  ${C.d}score ${a.score}/100 · ${a.findings.length} finding(s)${C.r}`,
+    "",
+    `  ${C.d}From    ${C.r}${a.message.from.name ? `${a.message.from.name} ` : ""}<${a.message.from.address}>`,
+    `  ${C.d}Subject ${C.r}${a.message.subject || "(none)"}`,
+    `  ${C.d}Auth    ${C.r}SPF ${a.auth.spf} · DKIM ${a.auth.dkim} · DMARC ${a.auth.dmarc}`,
+    `  ${C.d}Content ${C.r}${a.message.attachmentCount} attachment(s) · ${a.message.urlCount} link(s)`,
+    "",
+  ];
+  for (const f of a.findings.slice(0, 12)) {
+    const sc = f.severity === "critical" || f.severity === "high" ? C.red : f.severity === "medium" ? C.amber : C.d;
+    lines.push(`  ${sc}${f.severity.toUpperCase().padEnd(8)}${C.r} ${f.title} ${C.d}— ${f.detail}${C.r}`);
+  }
+  if (a.findings.length > 12) lines.push(`  ${C.d}… and ${a.findings.length - 12} more${C.r}`);
+  return lines.join("\n");
+}
+
+// ---- Markdown ---------------------------------------------------------------
+
+export function renderMarkdown(a: Analysis): string {
+  const rows = a.findings.map((f) => `| ${f.severity} | ${f.title} | ${f.detail.replace(/\|/g, "\\|")} | ${f.score} | ${f.source} |`).join("\n");
+  return [
+    `# ${a.verdict.toUpperCase()} — ${a.message.subject || "(no subject)"}`,
+    "",
+    `> Analysed by **${BRAND.product}** on ${a.analysedAt} · report \`${a.id}\`${a.demo ? " · demo data" : ""}`,
+    "",
+    `**Risk score: ${a.score}/100.** ${a.summary}`,
+    "",
+    "## Message",
+    "",
+    `- **From:** ${a.message.from.name} <${a.message.from.address}>`,
+    a.message.replyTo ? `- **Reply-To:** ${a.message.replyTo.address}` : "",
+    `- **To:** ${a.message.to.map((t) => t.address).join(", ")}`,
+    `- **Date:** ${a.message.date}`,
+    `- **Message-ID:** ${a.message.messageId}`,
+    `- **Authentication:** SPF ${a.auth.spf} · DKIM ${a.auth.dkim} · DMARC ${a.auth.dmarc}${a.auth.alignmentMismatch ? " · envelope misaligned" : ""}`,
+    "",
+    `## Findings (${a.findings.length})`,
+    "",
+    a.findings.length ? "| Severity | Finding | Detail | Score | Source |\n| --- | --- | --- | --- | --- |\n" + rows : "_No findings._",
+    "",
+    "## Engines",
+    "",
+    ...a.engines.map((e) => `- ${e.ran ? "✓" : "✗"} **${e.name}** — ${e.note}`),
+    "",
+    "---",
+    `Generated by [${BRAND.product}](${BRAND.repo}) — ${BRAND.author} · ${BRAND.url}`,
+  ].filter(Boolean).join("\n");
+}
+
+// ---- HTML -------------------------------------------------------------------
+
+/** Render the analysis as a self-contained, printable HTML report. */
+export function renderHtml(a: Analysis): string {
+  const findingRows = a.findings.map((f) => `
+    <tr>
+      <td><span class="sev" style="background:${SEV_COLOR[f.severity]}">${esc(f.severity)}</span></td>
+      <td><b>${esc(f.title)}</b><div class="muted">${esc(f.detail)}</div>${f.evidence ? `<div class="ev mono">${esc(f.evidence.slice(0, 160))}</div>` : ""}</td>
+      <td class="mono">${f.score}</td>
+      <td class="muted">${esc(f.source)}</td>
+    </tr>`).join("");
+
+  const attachRows = a.attachments.map((at) => `
+    <tr><td><b>${esc(at.filename)}</b></td><td class="muted">${esc(at.contentType)}</td><td>${bytes(at.size)}</td><td class="mono muted">${esc(at.sha256.slice(0, 32))}…</td></tr>`).join("")
+    || `<tr><td colspan="4" class="muted">No attachments.</td></tr>`;
+
+  const urlRows = a.urls.map((u) => `
+    <tr><td class="mono">${esc(u.url.slice(0, 90))}</td><td>${esc(u.host)}</td><td class="muted">${esc(u.text ?? "—")}</td></tr>`).join("")
+    || `<tr><td colspan="3" class="muted">No links.</td></tr>`;
+
+  const vtRows = a.virustotal.map((v) => `
+    <tr><td class="mono">${esc(v.target.slice(0, 60))}${v.target.length > 60 ? "…" : ""}</td><td>${esc(v.kind)}</td>
+    <td>${v.unknown ? '<span class="muted">never seen</span>' : `<b style="color:${v.malicious ? VERDICT_COLOR.malicious : VERDICT_COLOR.clean}">${v.malicious}</b> / ${v.malicious + v.suspicious + v.harmless + v.undetected}`}</td>
+    <td class="muted">${esc(v.detections.slice(0, 2).join("; ") || v.error || "—")}</td></tr>`).join("")
+    || `<tr><td colspan="4" class="muted">VirusTotal was not consulted.</td></tr>`;
+
+  const clamRows = a.clamav.map((c) => `
+    <tr><td><b>${esc(c.filename)}</b></td><td style="color:${c.infected ? VERDICT_COLOR.malicious : VERDICT_COLOR.clean}">${c.infected ? "INFECTED" : "clean"}</td><td class="mono muted">${esc(c.signature ?? c.error ?? "—")}</td></tr>`).join("")
+    || `<tr><td colspan="3" class="muted">ClamAV was not consulted.</td></tr>`;
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(a.verdict.toUpperCase())} — ${esc(a.message.subject || "message")} · ${esc(BRAND.short)}</title>
+<!-- Generated by ${esc(BRAND.product)} — ${esc(BRAND.author)} (${esc(BRAND.url)}). Attribution must remain intact (see LICENSE). -->
+<style>
+  :root{--accent:${THEME.accent};--ink:${THEME.ink};--mute:${THEME.mute};--line:${THEME.line};--bg:${THEME.bg}}
+  *{box-sizing:border-box}
+  body{margin:0;color:var(--ink);font:14px/1.55 Inter,"Segoe UI",system-ui,-apple-system,sans-serif;
+    background-color:var(--bg);background-image:linear-gradient(${THEME.grid} 1px,transparent 1px),linear-gradient(90deg,${THEME.grid} 1px,transparent 1px);background-size:46px 46px}
+  a{color:var(--ink)}.mono{font-family:"SFMono-Regular",Consolas,monospace;font-size:12.5px}.muted{color:var(--mute)}
+  .ic{width:18px;height:18px;vertical-align:middle}
+  .page{max-width:960px;margin:28px auto;background:#fff;border:1px solid var(--line);border-radius:18px;overflow:hidden}
+  header{padding:28px 36px 22px;border-bottom:1px solid var(--line)}
+  header .brand{display:flex;align-items:center;gap:9px;font-weight:800;font-size:11.5px;letter-spacing:.12em;color:var(--accent)}
+  header .brand .ic{width:22px;height:22px}
+  header h1{margin:.5em 0 .3em;font-size:25px;font-weight:800;letter-spacing:-.03em}
+  .verdict{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:5px 14px;font-size:12.5px;font-weight:800;letter-spacing:.04em;
+    background:${VERDICT_TINT[a.verdict]};color:${VERDICT_COLOR[a.verdict]}}
+  .verdict .ic{width:16px;height:16px}
+  .meta{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:18px}
+  .meta div{background:#faf9f5;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .meta span{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#a7a299;font-weight:700}
+  .meta strong{font-size:16px;font-weight:800;letter-spacing:-.02em}
+  main{padding:24px 36px 36px}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--mute);border-bottom:1px solid var(--line);padding-bottom:7px;margin-top:28px;font-weight:700;display:flex;align-items:center;gap:8px}
+  h2 .ic{width:16px;height:16px;color:var(--accent)}
+  table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px}
+  th{text-align:left;color:var(--mute);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;font-weight:700;padding:8px 9px;border-bottom:1px solid var(--line)}
+  td{padding:9px;border-bottom:1px solid #f0ede5;vertical-align:top}
+  .sev{display:inline-block;color:#fff;border-radius:999px;padding:2px 9px;font:700 10px "SFMono-Regular",monospace;text-transform:uppercase}
+  .ev{margin-top:3px;color:#a7a299;font-size:11.5px;word-break:break-all}
+  .kv td:first-child{color:var(--mute);width:170px}
+  footer{padding:20px 36px;border-top:1px solid var(--line);color:var(--mute);font-size:12px}
+  footer a{color:var(--mute)}
+  @media print{body{background:#fff}.page{border:none;margin:0}}
+</style></head><body><div class="page">
+<header>
+  <div class="brand">${icon("logo")} <span>SOYRAGE AGENCY · MAILAEGIS</span></div>
+  <h1>${esc(a.message.subject || "(no subject)")}</h1>
+  <div class="verdict">${icon(a.verdict === "clean" ? "check" : a.verdict === "suspicious" ? "alert" : "danger")} ${esc(a.verdict.toUpperCase())}</div>
+  <span class="muted" style="margin-left:10px">${esc(a.summary)}</span>
+  <div class="meta">
+    <div><span>Risk score</span><strong style="color:${VERDICT_COLOR[a.verdict]}">${a.score}/100</strong></div>
+    <div><span>Findings</span><strong>${a.findings.length}</strong></div>
+    <div><span>Attachments</span><strong>${a.message.attachmentCount}</strong></div>
+    <div><span>Links</span><strong>${a.message.urlCount}</strong></div>
+  </div>
+</header>
+<main>
+  <h2>${icon("mail")} Message</h2>
+  <table class="kv">
+    <tr><td>From</td><td><b>${esc(a.message.from.name)}</b> &lt;${esc(a.message.from.address)}&gt;</td></tr>
+    ${a.message.replyTo ? `<tr><td>Reply-To</td><td class="mono">${esc(a.message.replyTo.address)}</td></tr>` : ""}
+    <tr><td>To</td><td class="mono">${esc(a.message.to.map((t) => t.address).join(", "))}</td></tr>
+    <tr><td>Date</td><td>${esc(a.message.date)}</td></tr>
+    <tr><td>Message-ID</td><td class="mono">${esc(a.message.messageId)}</td></tr>
+    <tr><td>Size</td><td>${bytes(a.message.sizeBytes)}</td></tr>
+  </table>
+
+  <h2>${icon("auth")} Authentication</h2>
+  <table class="kv">
+    <tr><td>SPF</td><td><b>${esc(a.auth.spf)}</b></td></tr>
+    <tr><td>DKIM</td><td><b>${esc(a.auth.dkim)}</b></td></tr>
+    <tr><td>DMARC</td><td><b>${esc(a.auth.dmarc)}</b></td></tr>
+    <tr><td>Envelope alignment</td><td>${a.auth.alignmentMismatch ? '<b style="color:' + VERDICT_COLOR.malicious + '">mismatch</b>' : "aligned"}</td></tr>
+  </table>
+
+  <h2>${icon("alert")} Findings (${a.findings.length})</h2>
+  <table><thead><tr><th>Severity</th><th>Finding</th><th>Score</th><th>Source</th></tr></thead>
+  <tbody>${findingRows || '<tr><td colspan="4" class="muted">Nothing of concern found.</td></tr>'}</tbody></table>
+
+  <h2>${icon("paperclip")} Attachments</h2>
+  <table><thead><tr><th>File</th><th>Declared type</th><th>Size</th><th>SHA-256</th></tr></thead><tbody>${attachRows}</tbody></table>
+
+  <h2>${icon("link")} Links</h2>
+  <table><thead><tr><th>URL</th><th>Host</th><th>Shown as</th></tr></thead><tbody>${urlRows}</tbody></table>
+
+  <h2>${icon("shield")} VirusTotal</h2>
+  <table><thead><tr><th>Target</th><th>Kind</th><th>Detections</th><th>Engines</th></tr></thead><tbody>${vtRows}</tbody></table>
+
+  <h2>${icon("shield")} ClamAV</h2>
+  <table><thead><tr><th>File</th><th>Result</th><th>Signature</th></tr></thead><tbody>${clamRows}</tbody></table>
+
+  <h2>${icon("engine")} Engines that ran</h2>
+  <table><thead><tr><th>Engine</th><th>Ran</th><th>Notes</th></tr></thead><tbody>
+    ${a.engines.map((e) => `<tr><td><b>${esc(e.name)}</b></td><td style="color:${e.ran ? VERDICT_COLOR.clean : VERDICT_COLOR.suspicious}">${e.ran ? "yes" : "no"}</td><td class="muted">${esc(e.note)}</td></tr>`).join("")}
+  </tbody></table>
+</main>
+<footer>Report <b>${esc(a.id)}</b> · ${esc(a.analysedAt)}${a.demo ? " · demo data" : ""} — generated by
+  <a href="${BRAND.repo}">${esc(BRAND.product)}</a>, ${esc(BRAND.author)} · <a href="${BRAND.url}">${esc(BRAND.url)}</a> ·
+  <a href="${BRAND.donate}">Support</a></footer>
+</div></body></html>`;
+}

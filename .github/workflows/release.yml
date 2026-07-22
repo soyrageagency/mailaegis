@@ -1,0 +1,108 @@
+name: Release desktop app
+
+# Builds the MailAegis desktop app for macOS (Intel + Apple Silicon) and
+# Windows, then publishes the installers to a GitHub Release.
+#
+# Trigger it by pushing a tag:   git tag v1.0.0 && git push origin v1.0.0
+# or manually from the Actions tab (workflow_dispatch).
+#
+# Crafted by SoyRage Agency — https://soyrage.es/
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish the release under (e.g. v1.0.0)"
+        required: true
+        default: "v1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Build the analyzer itself (zero runtime dependencies).
+      - name: Build the analyzer
+        run: |
+          npm ci
+          npm run build
+
+      - name: Verify the analyzer before packaging
+        run: node scripts/smoke.mjs
+
+      # Package the Electron shell around it.
+      - name: Build the desktop app
+        working-directory: desktop
+        env:
+          # Unsigned builds — we ship no Apple/Microsoft certificates.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          npm install
+          npm run dist
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: mailaegis-${{ matrix.os }}
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.exe
+            desktop/release/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Show what we collected
+        run: find artifacts -type f -print
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: MailAegis ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          body: |
+            **MailAegis — Corporate Email Threat Analyzer** · by [SoyRage Agency](https://soyrage.es/)
+
+            Desktop builds of the mail client with an antivirus layer: VirusTotal reputation,
+            ClamAV content scanning, SPF/DKIM/DMARC and an in-house phishing/BEC engine.
+
+            | Platform | File |
+            | --- | --- |
+            | macOS (Apple Silicon) | `MailAegis-*-mac-arm64.dmg` |
+            | macOS (Intel) | `MailAegis-*-mac-x64.dmg` |
+            | Windows | `MailAegis-*-win-x64.exe` |
+
+            > These builds are **not code-signed**. On macOS: right-click → Open the first
+            > time. On Windows: "More info" → "Run anyway".
+
+            Configuration (VirusTotal key, ClamAV host, your corporate domains) goes in
+            `settings.json` inside the app's user-data folder — **Help → Open settings folder**.
+
+            Prefer the CLI or the HTTP API? See the [README](https://github.com/soyrageagency/mailaegis#readme).
+          files: artifacts/**/*

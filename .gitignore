@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Environment & secrets (VirusTotal keys, API tokens)
+.env
+.env.local
+.env.*.local
+
+# Generated analysis reports & scratch
+reports/
+.smoke-reports/
+
+# Desktop app build output (the analyzer is copied in at package time)
+desktop/dist/
+desktop/release/
+
+# Sample mail dropped in for local testing
+*.eml
+!examples/*.eml
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+coverage/
+.nyc_output/

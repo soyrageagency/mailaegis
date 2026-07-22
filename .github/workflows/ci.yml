@@ -1,0 +1,28 @@
+name: CI
+
+# Build, type-check and run the smoke suite (MIME parsing, heuristics, scoring,
+# reports and the HTTP API) on every push/PR. Everything runs headless in demo
+# mode — no VirusTotal key and no ClamAV daemon required.
+#
+# Crafted by SoyRage Agency — https://soyrage.es/
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Build & smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: node scripts/smoke.mjs

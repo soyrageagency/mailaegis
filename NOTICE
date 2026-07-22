@@ -1,0 +1,23 @@
+MailAegis — Corporate Email Threat Analyzer
+Copyright (c) 2026 SoyRage Agency — https://soyrage.es/
+
+This product is developed and maintained by SoyRage Agency.
+
+It is distributed under the SoyRage Attribution License (see LICENSE). The
+attribution to SoyRage Agency — including the ASCII banner, the generated
+report footers, and the source headers — must remain intact and visible in any
+copy or derivative work.
+
+THIRD-PARTY SERVICES
+  · VirusTotal — used via its public API v3 for reputation lookups only.
+    MailAegis submits SHA-256 hashes and URL identifiers, never file contents.
+    Your use of VirusTotal is subject to its own terms of service.
+  · ClamAV — attachments are streamed to a clamd instance that YOU operate,
+    so message content never leaves your infrastructure.
+
+The malicious samples bundled for demonstration contain the EICAR test string,
+an industry-standard harmless test file — never real malware.
+
+Need this wired into your corporate mail gateway? SoyRage Agency offers
+hands-on e-mail security engineering — https://soyrage.es/ ·
+https://www.paypal.com/paypalme/soyrageagency

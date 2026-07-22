@@ -1,0 +1,48 @@
+{
+  "name": "mailaegis-desktop",
+  "productName": "MailAegis",
+  "version": "1.0.0",
+  "description": "MailAegis — Corporate Email Threat Analyzer, as a desktop app. Built by SoyRage Agency.",
+  "author": "SoyRage Agency (https://soyrage.es/)",
+  "license": "SEE LICENSE IN ../LICENSE",
+  "homepage": "https://github.com/soyrageagency/mailaegis#readme",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "sync": "node sync-dist.mjs",
+    "start": "npm run sync && electron .",
+    "dist": "npm run sync && electron-builder",
+    "dist:mac": "npm run sync && electron-builder --mac",
+    "dist:win": "npm run sync && electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "es.soyrage.mailaegis",
+    "productName": "MailAegis",
+    "copyright": "Copyright (c) 2026 SoyRage Agency",
+    "directories": { "output": "release" },
+    "files": ["main.js", "dist/**/*", "package.json"],
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
+      "category": "public.app-category.productivity",
+      "artifactName": "MailAegis-${version}-mac-${arch}.${ext}"
+    },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "artifactName": "MailAegis-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "MailAegis"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Network",
+      "artifactName": "MailAegis-${version}-linux-${arch}.${ext}"
+    }
+  }
+}
